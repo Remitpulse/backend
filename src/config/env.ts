@@ -105,7 +105,7 @@ const EnvSchema = z.object({
   WEBHOOK_REQUIRE_SIGNATURE: bool.default(true),
   WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
   // Background poller for remittance transactions stuck in a non-terminal state
-  REMITTANCE_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+  REMITTANCE_POLL_INTERVAL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   REMITTANCE_POLL_STALE_AFTER_SECONDS: z.coerce.number().int().positive().default(120),
   REMITTANCE_POLL_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   // HMAC key used to deterministically derive a per-user custodial Ed25519 account for

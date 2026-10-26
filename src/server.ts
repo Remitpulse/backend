@@ -57,21 +57,26 @@ async function pollStaleRemittances(): Promise<void> {
   }
 }
 
-const pollerInterval = setInterval(() => void pollStaleRemittances(), env.REMITTANCE_POLL_INTERVAL_SECONDS * 1000)
-if (typeof pollerInterval.unref === 'function') pollerInterval.unref()
+let pollerInterval: ReturnType<typeof setInterval> | null = null
+if (env.REMITTANCE_POLL_INTERVAL_SECONDS > 0) {
+  pollerInterval = setInterval(() => void pollStaleRemittances(), env.REMITTANCE_POLL_INTERVAL_SECONDS * 1000)
+  if (typeof pollerInterval.unref === 'function') pollerInterval.unref()
 
-logger.info(
-  {
-    intervalSeconds: env.REMITTANCE_POLL_INTERVAL_SECONDS,
-    staleAfterSeconds: env.REMITTANCE_POLL_STALE_AFTER_SECONDS,
-    batchSize: env.REMITTANCE_POLL_BATCH_SIZE,
-  },
-  'Remittance poller started'
-)
+  logger.info(
+    {
+      intervalSeconds: env.REMITTANCE_POLL_INTERVAL_SECONDS,
+      staleAfterSeconds: env.REMITTANCE_POLL_STALE_AFTER_SECONDS,
+      batchSize: env.REMITTANCE_POLL_BATCH_SIZE,
+    },
+    'Remittance poller started',
+  )
+} else {
+  logger.info('Remittance poller disabled (REMITTANCE_POLL_INTERVAL_SECONDS=0)')
+}
 
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Shutting down')
-  clearInterval(pollerInterval)
+  if (pollerInterval) clearInterval(pollerInterval)
   server.close()
   await prisma.$disconnect()
   process.exit(0)
