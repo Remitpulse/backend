@@ -60,6 +60,14 @@ corridors with FX quoting, on Stellar.
   small batches (one tick every `REMITTANCE_POLL_INTERVAL_SECONDS`), logging per-transaction
   failures without aborting the tick. This keeps statuses fresh even when an anchor's webhook
   delivery fails and the client never retries the manual sync.
+- **Relayer sequence locking (cross-process).** Relayer-sourced Soroban submissions are
+  serialized across *all* backend replicas with a Postgres advisory lock
+  (`pg_advisory_lock`) keyed by the relayer account's public key — not an in-process mutex,
+  which would only protect a single process. The lock is released on both success and failure
+  paths (timeout-safe), so a failed submission never wedges the relayer. This assumes every
+  replica connects to the **same** Postgres instance (`DATABASE_URL`); horizontal scaling is
+  safe as long as that shared-Postgres assumption holds, since replicas that don't share a
+  database would not see each other's locks and could race on the relayer's sequence number.
 - **Webhook authenticity.** `POST /v1/anchors/:code/webhook` verifies the anchor's
   `Signature: t=<unix>, s=<base64 ed25519 sig>` header against the `SIGNING_KEY` published in its
   `stellar.toml` (the convention used by Stellar's Anchor Platform), rejecting stale or unsigned

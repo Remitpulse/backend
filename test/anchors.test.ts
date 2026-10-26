@@ -18,9 +18,12 @@ const HOME_DOMAIN = 'remitpulse.app'
 // Mock anchor server
 // ---------------------------------------------------------------------------
 
+type ChallengeTimeBounds = 'missing' | 'expired' | 'too-long' | 'valid'
+
 interface MockAnchorState {
   signingKeypair: Keypair
   challengeExpired: boolean
+  challengeTimeBounds: ChallengeTimeBounds
   verifyShouldFail: boolean
   depositInteractiveShouldFail: boolean
   withdrawInteractiveShouldFail: boolean
@@ -38,6 +41,7 @@ interface MockAnchorState {
 const state: MockAnchorState = {
   signingKeypair: Keypair.random(),
   challengeExpired: false,
+  challengeTimeBounds: 'valid',
   verifyShouldFail: false,
   depositInteractiveShouldFail: false,
   withdrawInteractiveShouldFail: false,
@@ -54,6 +58,7 @@ const state: MockAnchorState = {
 
 function resetState() {
   state.challengeExpired = false
+  state.challengeTimeBounds = 'valid'
   state.verifyShouldFail = false
   state.depositInteractiveShouldFail = false
   state.withdrawInteractiveShouldFail = false
@@ -88,12 +93,29 @@ function buildToml(): string {
 }
 
 /** Builds a syntactically valid SEP-10 challenge transaction for `clientAccount`. */
-function buildChallengeXdr(clientAccount: string): string {
+function buildChallengeXdr(clientAccount: string, timeBounds: ChallengeTimeBounds = state.challengeTimeBounds): string {
   const source = new Account(state.signingKeypair.publicKey(), '-1')
-  const tx = new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE })
-    .addOperation(Operation.manageData({ name: `${HOME_DOMAIN} auth`, value: randomBytes(64), source: clientAccount }))
-    .setTimeout(30)
-    .build()
+  const builder = new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE }).addOperation(
+    Operation.manageData({ name: `${HOME_DOMAIN} auth`, value: randomBytes(64), source: clientAccount })
+  )
+
+  const now = Math.floor(Date.now() / 1000)
+  switch (timeBounds) {
+    case 'missing':
+      // No time bounds at all.
+      break
+    case 'expired':
+      builder.setTimebounds(now - 3600, now - 1800)
+      break
+    case 'too-long':
+      builder.setTimebounds(now, now + 7 * 24 * 3600)
+      break
+    case 'valid':
+      builder.setTimebounds(now, now + 15 * 60)
+      break
+  }
+
+  const tx = builder.build()
   tx.sign(state.signingKeypair)
   return tx.toXDR()
 }
@@ -281,6 +303,36 @@ describe('SEP-10 authentication', () => {
     const userKeypair = Keypair.random()
 
     await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow()
+  })
+
+  it('rejects a challenge with no time bounds', async () => {
+    state.challengeTimeBounds = 'missing'
+    const userKeypair = Keypair.random()
+
+    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/time bounds/i)
+  })
+
+  it('rejects a challenge whose time bounds are already expired', async () => {
+    state.challengeTimeBounds = 'expired'
+    const userKeypair = Keypair.random()
+
+    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/time bounds/i)
+  })
+
+  it('rejects a challenge with an implausibly long validity window', async () => {
+    state.challengeTimeBounds = 'too-long'
+    const userKeypair = Keypair.random()
+
+    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/time bounds/i)
+  })
+
+  it('accepts a challenge with a valid ~15 minute window', async () => {
+    state.challengeTimeBounds = 'valid'
+    const userKeypair = Keypair.random()
+
+    const result = await authenticateWithAnchor(anchorDomain, userKeypair)
+    expect(result).toBeDefined()
+    expect(typeof result.token).toBe('string')
   })
 })
 
