@@ -5,7 +5,8 @@ import { logger } from '../../config/logger'
 import { STELLAR } from '../../config/stellar'
 import { BadRequestError, UpstreamError } from '../../errors'
 import { retry, sleep } from '../../lib/retry'
-import { Mutex } from './mutex'
+import { prisma } from '../../lib/prisma'
+import { withAdvisoryLock } from '../../lib/advisory-lock'
 
 export type Simulation = rpc.Api.SimulateTransactionSuccessResponse
 
@@ -32,8 +33,6 @@ const LEDGER_SECONDS = 5
 export class SorobanService {
   private static instance?: SorobanService
   public readonly rpc: rpc.Server
-  // Serialises sequence-number usage of the relayer account within this process
-  private readonly relayerLock = new Mutex()
 
   constructor(server?: rpc.Server) {
     this.rpc =
@@ -161,9 +160,19 @@ export class SorobanService {
     )
   }
 
-  /** Runs `fn` while holding the relayer sequence lock. */
+  /**
+   * Runs `fn` while holding the relayer sequence lock.
+   *
+   * The lock is cross-process: it is a Postgres advisory lock keyed by the
+   * relayer account's public key, so concurrent submissions from multiple
+   * backend replicas are serialised on the relayer's sequence number. This
+   * relies on every replica sharing the same Postgres instance (the one behind
+   * the shared `prisma` client). Acquisition is timeout-bounded so a stuck
+   * holder cannot block forever, and the lock is released on both success and
+   * failure paths.
+   */
   withRelayer<T>(fn: () => Promise<T>): Promise<T> {
-    return this.relayerLock.run(fn)
+    return withAdvisoryLock(prisma, `relayer:${STELLAR.relayer.publicKey()}`, fn)
   }
 
   /** Submits a (fee-bumped) transaction and waits for it to be applied. */

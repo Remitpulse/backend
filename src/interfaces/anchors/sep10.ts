@@ -10,6 +10,9 @@ import { getAnchorToml } from './toml'
 type ChallengeResponse = { transaction: string; network_passphrase?: string }
 type TokenResponse = { token: string }
 
+/** SEP-10 recommends a short challenge validity window (default 15 minutes). */
+const MAX_CHALLENGE_WINDOW_SECONDS = 900
+
 /**
  * SEP-10 Web Authentication (classic accounts): fetches the anchor's challenge transaction,
  * signs it with the custody account (and, if configured, the wallet's client-domain key) and
@@ -67,6 +70,23 @@ function parseChallenge(xdrTx: string, account: string, anchorSigningKey: string
   }
   const value = first.value
   if (!value || value.length !== 64) throw new UpstreamError('anchor', 'challenge nonce must be 64 random bytes')
+
+  const timeBounds = tx.timeBounds
+  if (!timeBounds) throw new UpstreamError('anchor', 'challenge transaction is missing time bounds')
+  if (timeBounds.minTime === '0' || timeBounds.maxTime === '0' || timeBounds.maxTime === 'TimeoutInfinite') {
+    throw new UpstreamError('anchor', 'challenge time bounds must be bounded (minTime and maxTime required)')
+  }
+  const minTime = Number(timeBounds.minTime)
+  const maxTime = Number(timeBounds.maxTime)
+  if (!Number.isFinite(minTime) || !Number.isFinite(maxTime)) {
+    throw new UpstreamError('anchor', 'challenge time bounds are not valid unix timestamps')
+  }
+  const now = Math.floor(Date.now() / 1000)
+  if (now < minTime) throw new UpstreamError('anchor', 'challenge is not yet valid (current time is before minTime)')
+  if (now > maxTime) throw new UpstreamError('anchor', 'challenge has expired (current time is after maxTime)')
+  if (maxTime - minTime > MAX_CHALLENGE_WINDOW_SECONDS) {
+    throw new UpstreamError('anchor', `challenge validity window is too long (max ${MAX_CHALLENGE_WINDOW_SECONDS}s)`)
+  }
 
   return tx
 }
