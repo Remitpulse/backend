@@ -291,6 +291,7 @@ model RemittanceTransaction {
   @@unique([corridorId, anchorTxId])
   @@index([userId, createdAt])
   @@index([status])
+  @@index([status, updatedAt])
   @@map("remittance_transactions")
 }
 

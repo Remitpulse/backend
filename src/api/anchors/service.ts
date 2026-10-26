@@ -12,6 +12,8 @@ import {
   startWithdrawal as startSep24Withdrawal,
   verifyWebhookSignature,
 } from '../../interfaces/anchors/sep24'
+import { authenticateWithAnchorSep45, supportsSep45 } from '../../interfaces/anchors/sep45'
+import { getAnchorToml } from '../../interfaces/anchors/toml'
 import { decrypt, encrypt } from '../../lib/crypto'
 import { corridorTokenContract, getCorridor } from '../corridors/service'
 import { WalletService } from '../wallet/service'
@@ -46,20 +48,34 @@ function mapAnchorStatus(status: string): RemittanceStatus {
 }
 
 /**
- * Ensures a live anchor session, authenticating via classic SEP-10 using the
- * deterministically-derived custody account if needed.
+ * Ensures a live anchor session, authenticating if needed.
  *
- * NOTE: some anchors advertise SEP-45 (contract-account web auth), which would let us
- * authenticate as the user's smart-wallet contract address directly. That requires a
- * two-phase prepare/submit signing flow (like wallet invocations) that isn't wired up yet;
- * see `src/interfaces/anchors/sep45.ts`.
+ * When the anchor's stellar.toml advertises SEP-45 (contract-account web auth), we
+ * authenticate directly as the user's smart-wallet contract address via the two-phase
+ * prepare/submit signing flow in `src/interfaces/anchors/sep45.ts`, mirroring the pattern
+ * used for wallet invocations. Otherwise we fall back to classic SEP-10 using the
+ * deterministically-derived custody account.
  */
 async function ensureAnchorSession(userId: string, corridorId: string, anchorDomain: string, account: string) {
   const existing = await prisma.anchorSession.findUnique({ where: { userId_corridorId_account: { userId, corridorId, account } } })
   if (existing && existing.expiresAt > new Date(Date.now() + 60_000)) return decrypt(existing.encryptedToken)
 
-  const keypair = deriveAnchorKeypair(userId)
-  const { token, expiresAt } = await authenticateWithAnchor(anchorDomain, keypair)
+  const toml = await getAnchorToml(anchorDomain)
+
+  let token: string
+  let expiresAt: Date
+  if (supportsSep45(toml)) {
+    const contractAddress = await wallet.getContractAddress(userId)
+    const signer = {
+      contractAddress,
+      sign: async (prepared: { invocationId: string }) => wallet.signInvocation(userId, prepared.invocationId),
+    }
+    ;({ token, expiresAt } = await authenticateWithAnchorSep45(anchorDomain, toml, signer))
+  } else {
+    const keypair = deriveAnchorKeypair(userId)
+    ;({ token, expiresAt } = await authenticateWithAnchor(anchorDomain, keypair))
+  }
+
   await prisma.anchorSession.upsert({
     where: { userId_corridorId_account: { userId, corridorId, account } },
     create: { userId, corridorId, account, encryptedToken: encrypt(token), expiresAt },
