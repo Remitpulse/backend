@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { BadRequestError } from '../src/errors'
 import { fromBaseUnits, toBaseUnits } from '../src/lib/money'
 
 describe('toBaseUnits / fromBaseUnits', () => {
@@ -9,10 +10,10 @@ describe('toBaseUnits / fromBaseUnits', () => {
   })
 
   it('rejects negative amounts', () => {
-    expect(() => toBaseUnits('-1')).toThrow(RangeError)
+    expect(() => toBaseUnits('-1')).toThrow(BadRequestError)
   })
 
   it('rejects more than 7 decimal places', () => {
-    expect(() => toBaseUnits('1.12345678')).toThrow(RangeError)
+    expect(() => toBaseUnits('1.12345678')).toThrow(BadRequestError)
   })
 })

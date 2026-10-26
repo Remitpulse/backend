@@ -68,7 +68,7 @@ if (env.REMITTANCE_POLL_INTERVAL_SECONDS > 0) {
       staleAfterSeconds: env.REMITTANCE_POLL_STALE_AFTER_SECONDS,
       batchSize: env.REMITTANCE_POLL_BATCH_SIZE,
     },
-    'Remittance poller started',
+    'Remittance poller started'
   )
 } else {
   logger.info('Remittance poller disabled (REMITTANCE_POLL_INTERVAL_SECONDS=0)')
