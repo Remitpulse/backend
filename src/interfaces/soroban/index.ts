@@ -5,8 +5,7 @@ import { logger } from '../../config/logger'
 import { STELLAR } from '../../config/stellar'
 import { BadRequestError, UpstreamError } from '../../errors'
 import { retry, sleep } from '../../lib/retry'
-import { prisma } from '../../lib/prisma'
-import { withAdvisoryLock } from '../../lib/advisory-lock'
+import { withRelayerLock } from './mutex'
 
 export type Simulation = rpc.Api.SimulateTransactionSuccessResponse
 
@@ -172,7 +171,7 @@ export class SorobanService {
    * failure paths.
    */
   withRelayer<T>(fn: () => Promise<T>): Promise<T> {
-    return withAdvisoryLock(prisma, `relayer:${STELLAR.relayer.publicKey()}`, fn)
+    return withRelayerLock(STELLAR.relayer.publicKey(), fn)
   }
 
   /** Submits a (fee-bumped) transaction and waits for it to be applied. */

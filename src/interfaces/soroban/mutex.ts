@@ -48,22 +48,19 @@ export class PostgresAdvisoryLock {
    */
   async run<T>(fn: () => Promise<T>): Promise<T> {
     return prisma.$transaction(
-      async (tx) => {
+      async tx => {
         // Blocks until the advisory lock is acquired. Scoped to this transaction.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${this.key})`
         return fn()
       },
       // Allow long-running relayer submissions; the lock itself is bounded by
       // the transaction lifetime and released automatically.
-      { timeout: 60_000, maxWait: 60_000 },
+      { timeout: 60_000, maxWait: 60_000 }
     )
   }
 }
 
 /** Convenience helper: run `fn` under the cross-process lock for a relayer key. */
-export function withRelayerLock<T>(
-  relayerPublicKey: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+export function withRelayerLock<T>(relayerPublicKey: string, fn: () => Promise<T>): Promise<T> {
   return new PostgresAdvisoryLock(relayerPublicKey).run(fn)
 }

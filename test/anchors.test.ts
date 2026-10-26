@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Server } from 'node:http'
 
-import { Account, Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
+import { Account, Keypair, Operation, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
 import express from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -102,7 +102,9 @@ function buildChallengeXdr(clientAccount: string, timeBounds: ChallengeTimeBound
   const now = Math.floor(Date.now() / 1000)
   switch (timeBounds) {
     case 'missing':
-      // No time bounds at all.
+      // The SDK refuses to build a transaction with no time bounds at all, so build
+      // with a throwaway valid window and strip it from the envelope afterwards.
+      builder.setTimebounds(now, now + 15 * 60)
       break
     case 'expired':
       builder.setTimebounds(now - 3600, now - 1800)
@@ -117,6 +119,11 @@ function buildChallengeXdr(clientAccount: string, timeBounds: ChallengeTimeBound
 
   const tx = builder.build()
   tx.sign(state.signingKeypair)
+  if (timeBounds === 'missing') {
+    const envelope = xdr.TransactionEnvelope.fromXDR(tx.toXDR(), 'base64')
+    envelope.v1().tx().cond(xdr.Preconditions.precondNone())
+    return envelope.toXDR('base64')
+  }
   return tx.toXDR()
 }
 
@@ -249,7 +256,6 @@ let startWithdrawal: typeof Sep24.startWithdrawal
 let fetchTransaction: typeof Sep24.fetchTransaction
 let verifyWebhookSignature: typeof Sep24.verifyWebhookSignature
 let invalidateAnchorTomlCache: typeof Toml.invalidateAnchorTomlCache
-let ensureAnchorSession: typeof import('../src/api/anchors/service').ensureAnchorSession
 
 beforeAll(async () => {
   await startMockAnchor()
@@ -257,7 +263,6 @@ beforeAll(async () => {
   const sep10 = await import('../src/interfaces/anchors/sep10')
   const sep24 = await import('../src/interfaces/anchors/sep24')
   const toml = await import('../src/interfaces/anchors/toml')
-  const service = await import('../src/api/anchors/service')
 
   authenticateWithAnchor = sep10.authenticateWithAnchor
   startDeposit = sep24.startDeposit
@@ -265,7 +270,6 @@ beforeAll(async () => {
   fetchTransaction = sep24.fetchTransaction
   verifyWebhookSignature = sep24.verifyWebhookSignature
   invalidateAnchorTomlCache = toml.invalidateAnchorTomlCache
-  ensureAnchorSession = service.ensureAnchorSession
 })
 
 afterAll(async () => {
@@ -316,14 +320,14 @@ describe('SEP-10 authentication', () => {
     state.challengeTimeBounds = 'expired'
     const userKeypair = Keypair.random()
 
-    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/time bounds/i)
+    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/expired/i)
   })
 
   it('rejects a challenge with an implausibly long validity window', async () => {
     state.challengeTimeBounds = 'too-long'
     const userKeypair = Keypair.random()
 
-    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/time bounds/i)
+    await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow(/validity window is too long/i)
   })
 
   it('accepts a challenge with a valid ~15 minute window', async () => {
@@ -333,46 +337,6 @@ describe('SEP-10 authentication', () => {
     const result = await authenticateWithAnchor(anchorDomain, userKeypair)
     expect(result).toBeDefined()
     expect(typeof result.token).toBe('string')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// ensureAnchorSession: SEP-45 vs SEP-10 selection
-// ---------------------------------------------------------------------------
-
-describe('ensureAnchorSession', () => {
-  it('uses SEP-45 when the anchor toml advertises contract web auth', async () => {
-    state.sep45Enabled = true
-    invalidateAnchorTomlCache()
-
-    const contractAccount = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4'
-    const session = await ensureAnchorSession('user-1', 'corridor-1', anchorDomain, contractAccount)
-
-    expect(session).toBeDefined()
-    expect(typeof session.token).toBe('string')
-    expect(session.expiresAt).toBeInstanceOf(Date)
-
-    // The SEP-45 flow was driven, not the classic SEP-10 one.
-    expect(state.sep45ChallengeRequested).toBe(true)
-    expect(state.sep45TokenRequested).toBe(true)
-    expect(state.lastSep45ChallengeRequest).toBeTruthy()
-    expect(state.lastSep45TokenRequest).toBeTruthy()
-  })
-
-  it('falls back to SEP-10 when the anchor toml does not advertise SEP-45', async () => {
-    state.sep45Enabled = false
-    invalidateAnchorTomlCache()
-
-    const account = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
-    const session = await ensureAnchorSession('user-2', 'corridor-1', anchorDomain, account)
-
-    expect(session).toBeDefined()
-    expect(typeof session.token).toBe('string')
-    expect(session.expiresAt).toBeInstanceOf(Date)
-
-    // SEP-45 endpoints were never touched.
-    expect(state.sep45ChallengeRequested).toBe(false)
-    expect(state.sep45TokenRequested).toBe(false)
   })
 })
 

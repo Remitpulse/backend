@@ -3,7 +3,7 @@ import { UpstreamError } from '../../errors'
 import { requestJson } from '../../lib/http-client'
 import { Big } from '../../lib/money'
 import { getCorridor } from '../corridors/service'
-import { getAnchorToml } from '../anchors/toml'
+import { getAnchorToml } from '../../interfaces/anchors/toml'
 
 let httpCache: { at: number; base: string; rates: Record<string, number> } | undefined
 let sep38Cache: { at: number; base: string; rates: Record<string, number> } | undefined
