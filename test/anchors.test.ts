@@ -28,6 +28,11 @@ interface MockAnchorState {
   lastTransactionId: string
   lastDepositRequest: unknown
   lastWithdrawRequest: unknown
+  sep45Enabled: boolean
+  sep45ChallengeRequested: boolean
+  sep45TokenRequested: boolean
+  lastSep45ChallengeRequest: unknown
+  lastSep45TokenRequest: unknown
 }
 
 const state: MockAnchorState = {
@@ -40,6 +45,11 @@ const state: MockAnchorState = {
   lastTransactionId: 'tx-123',
   lastDepositRequest: null,
   lastWithdrawRequest: null,
+  sep45Enabled: false,
+  sep45ChallengeRequested: false,
+  sep45TokenRequested: false,
+  lastSep45ChallengeRequest: null,
+  lastSep45TokenRequest: null,
 }
 
 function resetState() {
@@ -51,6 +61,11 @@ function resetState() {
   state.lastTransactionId = 'tx-123'
   state.lastDepositRequest = null
   state.lastWithdrawRequest = null
+  state.sep45Enabled = false
+  state.sep45ChallengeRequested = false
+  state.sep45TokenRequested = false
+  state.lastSep45ChallengeRequest = null
+  state.lastSep45TokenRequest = null
 }
 
 let server: Server
@@ -58,13 +73,18 @@ let baseUrl: string
 let anchorDomain: string
 
 function buildToml(): string {
-  return [
+  const lines = [
     'VERSION="2.0.0"',
     `NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE}"`,
     `SIGNING_KEY="${state.signingKeypair.publicKey()}"`,
     `WEB_AUTH_ENDPOINT="${baseUrl}/auth"`,
     `TRANSFER_SERVER_SEP0024="${baseUrl}/sep24"`,
-  ].join('\n')
+  ]
+  if (state.sep45Enabled) {
+    lines.push(`WEB_AUTH_CONTRACT_ID="${state.signingKeypair.publicKey()}"`)
+    lines.push(`WEB_AUTH_CONTRACT_ENDPOINT="${baseUrl}/sep45"`)
+  }
+  return lines.join('\n')
 }
 
 /** Builds a syntactically valid SEP-10 challenge transaction for `clientAccount`. */
@@ -110,6 +130,33 @@ function startMockAnchor(): Promise<void> {
       Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
       Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'),
       'sig',
+    ].join('.')
+    res.json({ token })
+  })
+
+  // SEP-45 (contract-account web auth) challenge endpoint.
+  app.post('/sep45/challenge', (req, res) => {
+    state.sep45ChallengeRequested = true
+    state.lastSep45ChallengeRequest = req.body
+    const account = (req.body?.account as string | undefined) ?? (req.body?.client_domain as string | undefined)
+    if (!account) {
+      res.status(400).json({ error: 'missing account' })
+      return
+    }
+    res.json({
+      transaction: buildChallengeXdr(account),
+      network_passphrase: NETWORK_PASSPHRASE,
+    })
+  })
+
+  // SEP-45 token endpoint.
+  app.post('/sep45/token', (req, res) => {
+    state.sep45TokenRequested = true
+    state.lastSep45TokenRequest = req.body
+    const token = [
+      Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'),
+      'sep45sig',
     ].join('.')
     res.json({ token })
   })
@@ -180,6 +227,7 @@ let startWithdrawal: typeof Sep24.startWithdrawal
 let fetchTransaction: typeof Sep24.fetchTransaction
 let verifyWebhookSignature: typeof Sep24.verifyWebhookSignature
 let invalidateAnchorTomlCache: typeof Toml.invalidateAnchorTomlCache
+let ensureAnchorSession: typeof import('../src/api/anchors/service').ensureAnchorSession
 
 beforeAll(async () => {
   await startMockAnchor()
@@ -187,6 +235,7 @@ beforeAll(async () => {
   const sep10 = await import('../src/interfaces/anchors/sep10')
   const sep24 = await import('../src/interfaces/anchors/sep24')
   const toml = await import('../src/interfaces/anchors/toml')
+  const service = await import('../src/api/anchors/service')
 
   authenticateWithAnchor = sep10.authenticateWithAnchor
   startDeposit = sep24.startDeposit
@@ -194,6 +243,7 @@ beforeAll(async () => {
   fetchTransaction = sep24.fetchTransaction
   verifyWebhookSignature = sep24.verifyWebhookSignature
   invalidateAnchorTomlCache = toml.invalidateAnchorTomlCache
+  ensureAnchorSession = service.ensureAnchorSession
 })
 
 afterAll(async () => {
@@ -231,6 +281,46 @@ describe('SEP-10 authentication', () => {
     const userKeypair = Keypair.random()
 
     await expect(authenticateWithAnchor(anchorDomain, userKeypair)).rejects.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ensureAnchorSession: SEP-45 vs SEP-10 selection
+// ---------------------------------------------------------------------------
+
+describe('ensureAnchorSession', () => {
+  it('uses SEP-45 when the anchor toml advertises contract web auth', async () => {
+    state.sep45Enabled = true
+    invalidateAnchorTomlCache()
+
+    const contractAccount = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4'
+    const session = await ensureAnchorSession('user-1', 'corridor-1', anchorDomain, contractAccount)
+
+    expect(session).toBeDefined()
+    expect(typeof session.token).toBe('string')
+    expect(session.expiresAt).toBeInstanceOf(Date)
+
+    // The SEP-45 flow was driven, not the classic SEP-10 one.
+    expect(state.sep45ChallengeRequested).toBe(true)
+    expect(state.sep45TokenRequested).toBe(true)
+    expect(state.lastSep45ChallengeRequest).toBeTruthy()
+    expect(state.lastSep45TokenRequest).toBeTruthy()
+  })
+
+  it('falls back to SEP-10 when the anchor toml does not advertise SEP-45', async () => {
+    state.sep45Enabled = false
+    invalidateAnchorTomlCache()
+
+    const account = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
+    const session = await ensureAnchorSession('user-2', 'corridor-1', anchorDomain, account)
+
+    expect(session).toBeDefined()
+    expect(typeof session.token).toBe('string')
+    expect(session.expiresAt).toBeInstanceOf(Date)
+
+    // SEP-45 endpoints were never touched.
+    expect(state.sep45ChallengeRequested).toBe(false)
+    expect(state.sep45TokenRequested).toBe(false)
   })
 })
 

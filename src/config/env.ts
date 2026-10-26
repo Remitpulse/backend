@@ -113,6 +113,9 @@ const EnvSchema = z.object({
   ANCHOR_CUSTODY_SEED: z.string().min(32),
 
   // FX
+  // 'sep38' fetches live per-corridor quotes from the corridor anchor's SEP-38 quote server
+  // (the ANCHOR_QUOTE_SERVER advertised in its stellar.toml). A missing/unreachable quote
+  // server is a hard error — it never silently falls back to FX_STATIC_RATES.
   FX_PROVIDER: z.enum(['static', 'sep38', 'http']).default('static'),
   // JSON map of fiat code -> units per 1 USD, used by the static provider and as a fallback
   FX_STATIC_RATES: staticRates,
