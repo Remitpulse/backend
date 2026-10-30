@@ -1,4 +1,4 @@
-FROM node:22-slim AS build
+FROM node:25-slim AS build
 WORKDIR /app
 # Only used by `prisma generate` to resolve the config at build time; the client
 # connects with the real DATABASE_URL at runtime via the pg driver adapter.
@@ -13,7 +13,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:22-slim AS runtime
+FROM node:25-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # Only used by `prisma generate` to resolve the config at build time; the client
