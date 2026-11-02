@@ -1,4 +1,5 @@
 import { UpstreamError } from '../errors'
+import { retry } from './retry'
 
 export type HttpRequest = {
   method?: 'GET' | 'POST'
@@ -30,18 +31,25 @@ export async function requestJson<T>(service: string, url: string, options: Http
 
   let response: Response
   try {
-    response = await fetch(target, {
-      method: options.method ?? (body ? 'POST' : 'GET'),
-      headers,
-      body,
-      signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
-    })
+    // Only the network-level attempt is retried (DNS/connect/timeout failures); an HTTP
+    // error status below is surfaced once and never retried, since the anchor/FX call may
+    // not be safely repeatable server-side.
+    response = await retry(
+      () =>
+        fetch(target, {
+          method: options.method ?? (body ? 'POST' : 'GET'),
+          headers,
+          body,
+          signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+        }),
+      { attempts: 3, delayMs: 250 }
+    )
   } catch (error) {
     throw new UpstreamError(service, `request to ${target.origin} failed`, { cause: (error as Error).message })
   }
 
   const text = await response.text()
-  let payload: unknown = undefined
+  let payload: unknown
   try {
     payload = text ? JSON.parse(text) : undefined
   } catch {

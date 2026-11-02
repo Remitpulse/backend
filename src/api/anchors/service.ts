@@ -2,6 +2,7 @@ import type { RemittanceStatus } from '@prisma/client'
 import { Asset } from '@stellar/stellar-sdk'
 
 import { prisma } from '../../config/database'
+import { logger } from '../../config/logger'
 import { BadRequestError, NotFoundError } from '../../errors'
 import { deriveAnchorKeypair, ensureAnchorAccount } from '../../interfaces/anchors/custody'
 import { authenticateWithAnchor } from '../../interfaces/anchors/sep10'
@@ -17,6 +18,8 @@ import { corridorTokenContract, getCorridor } from '../corridors/service'
 import { WalletService } from '../wallet/service'
 
 const wallet = new WalletService()
+
+const TERMINAL_STATUSES: RemittanceStatus[] = ['completed', 'failed']
 
 function mapAnchorStatus(status: string): RemittanceStatus {
   switch (status) {
@@ -168,6 +171,18 @@ async function recordUpdate(transactionId: string, source: 'webhook' | 'poll', r
   const toStatus = mapAnchorStatus(remote.status)
   if (toStatus === current.status && remote.status === current.anchorStatus) return current
 
+  // Once a transaction has reached a terminal state, never let a later (e.g. replayed or
+  // out-of-order) update move it back to a non-terminal one. The anchor's own status history
+  // isn't trusted for ordering, so this is the only guard against a stale/replayed webhook
+  // or poll result undoing a completed/failed outcome.
+  if (TERMINAL_STATUSES.includes(current.status) && !TERMINAL_STATUSES.includes(toStatus)) {
+    logger.warn(
+      { transactionId, source, currentStatus: current.status, incomingAnchorStatus: remote.status },
+      'Anchors | ignoring out-of-order status update on a terminal remittance transaction'
+    )
+    return current
+  }
+
   return prisma.remittanceTransaction.update({
     where: { id: transactionId },
     data: {
@@ -226,4 +241,31 @@ export async function syncTransactionById(transactionId: string) {
   const transaction = await prisma.remittanceTransaction.findUnique({ where: { id: transactionId } })
   if (!transaction) throw new NotFoundError('Remittance transaction')
   return syncTransaction(transaction.userId, transactionId)
+}
+
+/**
+ * Marks a transaction that has been stuck in a non-terminal state for too long (e.g. an
+ * abandoned SEP-24 interactive session) as failed, without contacting the anchor again.
+ * Intended for the background poller once a transaction is past its expiry window.
+ */
+export async function expireTransaction(transactionId: string) {
+  const current = await prisma.remittanceTransaction.findUniqueOrThrow({ where: { id: transactionId } })
+  if (TERMINAL_STATUSES.includes(current.status)) return current
+
+  return prisma.remittanceTransaction.update({
+    where: { id: transactionId },
+    data: {
+      status: 'failed',
+      statusMessage: 'Expired: no anchor status update received within the allowed window',
+      events: {
+        create: {
+          source: 'poll',
+          fromStatus: current.status,
+          toStatus: 'failed',
+          anchorStatus: current.anchorStatus,
+          payload: { reason: 'expired' },
+        },
+      },
+    },
+  })
 }

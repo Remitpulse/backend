@@ -7,7 +7,7 @@ import { prisma } from './config/database'
 import { env } from './config/env'
 import { logger } from './config/logger'
 import { Sentry, sentryEnabled } from './config/sentry'
-import { syncTransactionById } from './api/anchors/service'
+import { expireTransaction, syncTransactionById } from './api/anchors/service'
 import { runRemittancePollTick } from './jobs/remittance-poller'
 
 process.on('uncaughtException', error => {
@@ -46,7 +46,17 @@ async function pollStaleRemittances(): Promise<void> {
           if (sentryEnabled) Sentry.captureException(err)
         }
       },
+      expireTransaction: async id => {
+        try {
+          await expireTransaction(id)
+          logger.warn({ transactionId: id }, 'Remittance poller: transaction expired without anchor resolution')
+        } catch (err) {
+          logger.error({ err, transactionId: id }, 'Remittance poller: failed to expire transaction')
+          if (sentryEnabled) Sentry.captureException(err)
+        }
+      },
       staleAfterSeconds: env.REMITTANCE_POLL_STALE_AFTER_SECONDS,
+      expireAfterSeconds: env.REMITTANCE_EXPIRE_AFTER_SECONDS,
       batchSize: env.REMITTANCE_POLL_BATCH_SIZE,
     })
   } catch (err) {
@@ -66,6 +76,7 @@ if (env.REMITTANCE_POLL_INTERVAL_SECONDS > 0) {
     {
       intervalSeconds: env.REMITTANCE_POLL_INTERVAL_SECONDS,
       staleAfterSeconds: env.REMITTANCE_POLL_STALE_AFTER_SECONDS,
+      expireAfterSeconds: env.REMITTANCE_EXPIRE_AFTER_SECONDS,
       batchSize: env.REMITTANCE_POLL_BATCH_SIZE,
     },
     'Remittance poller started'

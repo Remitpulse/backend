@@ -24,6 +24,19 @@ let cache = new Map<string, { at: number; toml: AnchorToml }>()
 const TOML_CACHE_MS = 5 * 60_000
 
 /**
+ * `ANCHOR_ALLOW_HTTP` exists only so local/test anchors (e.g. a loopback mock server in
+ * tests) can skip TLS. It must never downgrade a real anchor's stellar.toml fetch to plain
+ * HTTP, so it's scoped to loopback/local hostnames regardless of the flag's value.
+ */
+export function isLocalAnchorDomain(domain: string): boolean {
+  // Only strip a trailing ":<port>" — an IPv6 literal like "::1" also contains colons,
+  // so a bare `split(':')[0]` would mistake it for a host:port pair and mangle it.
+  const parts = domain.split(':')
+  const host = (parts.length === 2 && /^\d+$/.test(parts[1]) ? parts[0] : domain).toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost')
+}
+
+/**
  * Minimal SEP-1 (stellar.toml) reader: extracts the handful of top-level `KEY = "value"`
  * fields the anchor integration needs, plus the `[[CURRENCIES]]` array entries.
  * Intentionally not a general TOML parser.
@@ -76,7 +89,7 @@ export async function getAnchorToml(domain: string): Promise<AnchorToml> {
   const cached = cache.get(domain)
   if (cached && Date.now() - cached.at < TOML_CACHE_MS) return cached.toml
 
-  const protocol = env.ANCHOR_ALLOW_HTTP ? 'http' : 'https'
+  const protocol = env.ANCHOR_ALLOW_HTTP && isLocalAnchorDomain(domain) ? 'http' : 'https'
   const url = `${protocol}://${domain}/.well-known/stellar.toml`
   let response: Response
   try {

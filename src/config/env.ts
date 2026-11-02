@@ -109,6 +109,13 @@ const EnvSchema = z.object({
   REMITTANCE_POLL_INTERVAL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   REMITTANCE_POLL_STALE_AFTER_SECONDS: z.coerce.number().int().positive().default(120),
   REMITTANCE_POLL_BATCH_SIZE: z.coerce.number().int().positive().default(10),
+  // Non-terminal transactions older than this (e.g. an abandoned SEP-24 interactive session)
+  // are marked failed instead of being polled forever
+  REMITTANCE_EXPIRE_AFTER_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 3600),
   // HMAC key used to deterministically derive a per-user custodial Ed25519 account for
   // SEP-10 / SEP-24 anchor rails. Not related to RELAYER_SECRET_KEY or the user's smart wallet.
   ANCHOR_CUSTODY_SEED: z.string().min(32),

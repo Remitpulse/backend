@@ -510,4 +510,48 @@ describe('remittance poller', () => {
     expect(args.take).toBe(5)
     expect(syncSpy).not.toHaveBeenCalled()
   })
+
+  it('expires a transaction older than expireAfterSeconds instead of syncing it', async () => {
+    const { runRemittancePollTick } = await import('../src/jobs/remittance-poller')
+
+    const txs = [
+      { id: 'rem-fresh', status: 'pending_anchor', updatedAt: new Date(Date.now() - 5 * 60 * 1000) },
+      { id: 'rem-ancient', status: 'pending_anchor', updatedAt: new Date(Date.now() - 48 * 3600 * 1000) },
+    ]
+    const findMany = vi.fn().mockResolvedValue(txs)
+    const prisma = { remittanceTransaction: { findMany } } as any
+
+    const syncSpy = vi.fn().mockResolvedValue(undefined)
+    const expireSpy = vi.fn().mockResolvedValue(undefined)
+
+    await runRemittancePollTick({
+      prisma,
+      syncTransaction: syncSpy,
+      expireTransaction: expireSpy,
+      staleAfterSeconds: 60,
+      expireAfterSeconds: 24 * 3600,
+      batchSize: 10,
+    })
+
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+    expect(syncSpy).toHaveBeenCalledWith('rem-fresh')
+    expect(expireSpy).toHaveBeenCalledTimes(1)
+    expect(expireSpy).toHaveBeenCalledWith('rem-ancient')
+  })
+
+  it('never expires anything when expireAfterSeconds is omitted (backward compatible)', async () => {
+    const { runRemittancePollTick } = await import('../src/jobs/remittance-poller')
+
+    const txs = [{ id: 'rem-ancient', status: 'pending_anchor', updatedAt: new Date(0) }]
+    const findMany = vi.fn().mockResolvedValue(txs)
+    const prisma = { remittanceTransaction: { findMany } } as any
+
+    const syncSpy = vi.fn().mockResolvedValue(undefined)
+    const expireSpy = vi.fn()
+
+    await runRemittancePollTick({ prisma, syncTransaction: syncSpy, staleAfterSeconds: 60, batchSize: 10 })
+
+    expect(syncSpy).toHaveBeenCalledWith('rem-ancient')
+    expect(expireSpy).not.toHaveBeenCalled()
+  })
 })
