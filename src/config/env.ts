@@ -1,7 +1,8 @@
-import 'dotenv/config'
-
 import { StrKey } from '@stellar/stellar-sdk'
+import { config as loadDotenv } from 'dotenv'
 import { z } from 'zod'
+
+loadDotenv()
 
 const csv = z
   .string()

@@ -1,6 +1,6 @@
 import type {
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
@@ -63,7 +63,7 @@ export class WebAuthnService {
       supportedAlgorithmIDs: [COSE_ALG_ES256],
       excludeCredentials: excludeCredentials.map(passkey => ({
         id: passkey.credentialId,
-        transports: passkey.transports?.split(',') as AuthenticatorTransportFuture[] | undefined,
+        transports: passkey.transports?.split(',') as AuthenticatorTransport[] | undefined,
       })),
       authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
       timeout: env.WEBAUTHN_CHALLENGE_TTL_SECONDS * 1000,
@@ -151,7 +151,7 @@ export class WebAuthnService {
       timeout: env.WEBAUTHN_CHALLENGE_TTL_SECONDS * 1000,
       allowCredentials: passkeys.map(passkey => ({
         id: passkey.credentialId,
-        transports: passkey.transports?.split(',') as AuthenticatorTransportFuture[] | undefined,
+        transports: passkey.transports?.split(',') as AuthenticatorTransport[] | undefined,
       })),
     })
   }
@@ -170,7 +170,7 @@ export class WebAuthnService {
           id: passkey.credentialId,
           publicKey: new Uint8Array(passkey.credentialPublicKey),
           counter: Number(passkey.counter),
-          transports: passkey.transports?.split(',') as AuthenticatorTransportFuture[] | undefined,
+          transports: passkey.transports?.split(',') as AuthenticatorTransport[] | undefined,
         },
       })
     } catch (error) {
