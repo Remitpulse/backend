@@ -13,10 +13,10 @@ export default defineConfig({
       // Reflects coverage actually achieved by the real (passing) suite, not an
       // aspirational target — raise these deliberately as real tests are added.
       thresholds: {
-        lines: 40,
-        statements: 40,
-        functions: 35,
-        branches: 30,
+        lines: 60,
+        statements: 60,
+        functions: 55,
+        branches: 50,
       },
     },
   },
