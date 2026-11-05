@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Server } from 'node:http'
 
-import { Account, Keypair, Operation, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
+import { Account, Asset, Keypair, Operation, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
 import express from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,13 +12,16 @@ import type * as Toml from '../src/interfaces/anchors/toml'
 process.env.ANCHOR_ALLOW_HTTP ??= 'true'
 
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015'
-const HOME_DOMAIN = 'remitpulse.app'
 
 // ---------------------------------------------------------------------------
 // Mock anchor server
 // ---------------------------------------------------------------------------
 
 type ChallengeTimeBounds = 'missing' | 'expired' | 'too-long' | 'valid'
+type ChallengeAttack =
+  'unsigned' | 'wrong-signature' | 'payment' | 'foreign-source' | 'wrong-domain' | 'wrong-home' | 'bad-nonce' | 'wrong-network' | null
+let challengeAttack: ChallengeAttack = null
+let tokenRequests = 0
 
 interface MockAnchorState {
   signingKeypair: Keypair
@@ -57,6 +60,8 @@ const state: MockAnchorState = {
 }
 
 function resetState() {
+  challengeAttack = null
+  tokenRequests = 0
   state.challengeExpired = false
   state.challengeTimeBounds = 'valid'
   state.verifyShouldFail = false
@@ -96,7 +101,11 @@ function buildToml(): string {
 function buildChallengeXdr(clientAccount: string, timeBounds: ChallengeTimeBounds = state.challengeTimeBounds): string {
   const source = new Account(state.signingKeypair.publicKey(), '-1')
   const builder = new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE }).addOperation(
-    Operation.manageData({ name: `${HOME_DOMAIN} auth`, value: randomBytes(64), source: clientAccount })
+    Operation.manageData({
+      name: `${challengeAttack === 'wrong-home' ? 'evil.example' : anchorDomain} auth`,
+      value: challengeAttack === 'bad-nonce' ? '!'.repeat(64) : randomBytes(48).toString('base64'),
+      source: clientAccount,
+    })
   )
 
   const now = Math.floor(Date.now() / 1000)
@@ -117,12 +126,28 @@ function buildChallengeXdr(clientAccount: string, timeBounds: ChallengeTimeBound
       break
   }
 
+  if (challengeAttack === 'payment') {
+    builder.addOperation(
+      Operation.payment({ destination: Keypair.random().publicKey(), asset: Asset.native(), amount: '1', source: clientAccount })
+    )
+  }
+  if (challengeAttack === 'foreign-source' || challengeAttack === 'wrong-domain') {
+    builder.addOperation(
+      Operation.manageData({
+        name: 'web_auth_domain',
+        value: challengeAttack === 'wrong-domain' ? 'evil.example' : '127.0.0.1',
+        source: challengeAttack === 'foreign-source' ? clientAccount : state.signingKeypair.publicKey(),
+      })
+    )
+  }
   const tx = builder.build()
-  tx.sign(state.signingKeypair)
+  if (challengeAttack !== 'unsigned') tx.sign(challengeAttack === 'wrong-signature' ? Keypair.random() : state.signingKeypair)
   if (timeBounds === 'missing') {
     const envelope = xdr.TransactionEnvelope.fromXDR(tx.toXDR(), 'base64')
     envelope.v1().tx().cond(xdr.Preconditions.precondNone())
-    return envelope.toXDR('base64')
+    const stripped = TransactionBuilder.fromXDR(envelope.toXDR('base64'), NETWORK_PASSPHRASE)
+    stripped.sign(state.signingKeypair)
+    return stripped.toXDR()
   }
   return tx.toXDR()
 }
@@ -146,10 +171,14 @@ function startMockAnchor(): Promise<void> {
       res.status(400).json({ error: 'challenge expired' })
       return
     }
-    res.json({ transaction: buildChallengeXdr(account), network_passphrase: NETWORK_PASSPHRASE })
+    res.json({
+      transaction: buildChallengeXdr(account),
+      network_passphrase: challengeAttack === 'wrong-network' ? 'wrong network' : NETWORK_PASSPHRASE,
+    })
   })
 
   app.post('/auth', (_req, res) => {
+    tokenRequests++
     if (state.verifyShouldFail) {
       res.status(400).json({ error: 'invalid signature' })
       return
@@ -286,6 +315,21 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('SEP-10 authentication', () => {
+  it.each([
+    'unsigned',
+    'wrong-signature',
+    'payment',
+    'foreign-source',
+    'wrong-domain',
+    'wrong-home',
+    'bad-nonce',
+    'wrong-network',
+  ] as const)('rejects a %s challenge before sending a custody signature', async attack => {
+    challengeAttack = attack
+    await expect(authenticateWithAnchor(anchorDomain, Keypair.random())).rejects.toThrow()
+    expect(tokenRequests).toBe(0)
+  })
+
   it('authenticates against the mock anchor (happy path)', async () => {
     const userKeypair = Keypair.random()
     const result = await authenticateWithAnchor(anchorDomain, userKeypair)

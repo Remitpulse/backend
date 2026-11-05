@@ -30,19 +30,19 @@ export async function requestJson<T>(service: string, url: string, options: Http
   }
 
   let response: Response
+  const method = options.method ?? (body ? 'POST' : 'GET')
   try {
-    // Only the network-level attempt is retried (DNS/connect/timeout failures); an HTTP
-    // error status below is surfaced once and never retried, since the anchor/FX call may
-    // not be safely repeatable server-side.
+    // A lost response does not imply that a POST failed to execute at the anchor.
+    // Retry reads only; mutation retries require an upstream idempotency contract.
     response = await retry(
       () =>
         fetch(target, {
-          method: options.method ?? (body ? 'POST' : 'GET'),
+          method,
           headers,
           body,
           signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
         }),
-      { attempts: 3, delayMs: 250 }
+      { attempts: method === 'GET' ? 3 : 1, delayMs: 250 }
     )
   } catch (error) {
     throw new UpstreamError(service, `request to ${target.origin} failed`, { cause: (error as Error).message })

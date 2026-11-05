@@ -13,7 +13,7 @@ let respondStatus: number
 
 function startServer(): Promise<void> {
   const app = express()
-  app.get('/thing', (_req, res) => {
+  app.all('/thing', (_req, res) => {
     requestCount++
     if (requestCount <= failFirstNRequests) {
       res.destroy()
@@ -64,6 +64,12 @@ describe('requestJson retry behaviour', () => {
     failFirstNRequests = 10
     await expect(requestJson('test', `${baseUrl}/thing`)).rejects.toThrow()
     expect(requestCount).toBe(3)
+  })
+
+  it('does not repeat a POST when the server processes it but loses the response', async () => {
+    failFirstNRequests = 1
+    await expect(requestJson('test', `${baseUrl}/thing`, { json: { amount: '10' } })).rejects.toThrow()
+    expect(requestCount).toBe(1)
   })
 
   it('does not retry an HTTP error status (only network-level failures are retried)', async () => {

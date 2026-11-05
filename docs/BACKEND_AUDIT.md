@@ -1,4 +1,10 @@
-# RemitPulse Backend Audit
+# RemitPulse Backend Audit (historical)
+
+> Superseded by [the 2026-11-05 readiness review](READINESS_REVIEW.md).
+> This historical report contains incorrect claims: custody keys ARE derived by the
+> backend, SEP-10 previously omitted anchor-signature/operation checks, and passing
+> tests or CI configuration do not prove live interoperability. Its claims of
+> production-grade authentication and no custody must not be used as readiness evidence.
 
 **Date:** 2026-11-02
 **Scope:** `src/`, `prisma/`, `.github/workflows/`, `Dockerfile`, `test/`

@@ -1,10 +1,10 @@
 import type { Request } from 'express'
-import rateLimit from 'express-rate-limit'
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
 
 import { env } from '../../../config/env'
 import { TooManyRequestsError } from '../../../errors'
 
-const keyByUserOrIp = (req: Request): string => req.auth?.userId ?? req.ip ?? 'unknown'
+export const keyByUserOrIp = (req: Request): string => req.auth?.userId ?? (req.ip ? ipKeyGenerator(req.ip) : 'unknown')
 
 const handler = (): never => {
   throw new TooManyRequestsError()

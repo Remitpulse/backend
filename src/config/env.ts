@@ -99,7 +99,6 @@ const EnvSchema = z.object({
   // SEP-10 / SEP-24
   SEP10_CLIENT_DOMAIN: z.string().optional(),
   SEP10_CLIENT_DOMAIN_SECRET: stellarSecret.optional(),
-  SEP10_HOME_DOMAIN: z.string().min(1).default('remitpulse.app'),
   ANCHOR_ALLOW_HTTP: bool,
   ANCHOR_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   // Reject SEP-24 callbacks without a valid anchor signature
