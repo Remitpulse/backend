@@ -66,6 +66,15 @@ describe('apiRateLimit', () => {
 })
 
 describe('sensitiveRateLimit', () => {
+  it('shares an unauthenticated bucket across addresses in the same IPv6 subnet', async () => {
+    const { keyByUserOrIp } = await import('../src/api/core/middlewares/rate-limit')
+    const first = keyByUserOrIp({ ip: '2001:db8:1234:5600::1' } as Request)
+    const second = keyByUserOrIp({ ip: '2001:db8:1234:5600::2' } as Request)
+    const otherSubnet = keyByUserOrIp({ ip: '2001:db8:9876:5400::1' } as Request)
+    expect(first).toBe(second)
+    expect(first).not.toBe(otherSubnet)
+  })
+
   it('keys by userId rather than IP: a different user gets an independent bucket', async () => {
     const app = appWithSensitiveLimiter()
 

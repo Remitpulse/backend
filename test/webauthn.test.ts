@@ -188,6 +188,31 @@ describe('verifyLogin / verifyAssertion', () => {
   })
 })
 
+describe('concurrent challenge consumption', () => {
+  it('allows exactly one verifier to consume the same challenge', async () => {
+    const email = `race-${randomUUID()}@example.com`
+    await prisma.webAuthnChallenge.create({
+      data: { subject: email, purpose: 'authentication', challenge: 'race-challenge', expiresAt: new Date(Date.now() + 60_000) },
+    })
+    // Force both consumers to observe the exact same pre-deletion snapshot.
+    const row = await prisma.webAuthnChallenge.findFirstOrThrow({ where: { subject: email } })
+    const spy = vi.spyOn(prisma.webAuthnChallenge, 'findFirst').mockResolvedValue(row)
+    mocks.verifyAuthenticationResponse.mockResolvedValue({ verified: true, authenticationInfo: { newCounter: 0 } })
+    try {
+      const response = { id: passkeyRow.credentialId, response: {} } as never
+      const results = await Promise.allSettled([
+        service.verifyLogin(email, passkeyRow, response),
+        service.verifyLogin(email, passkeyRow, response),
+      ])
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1)
+      expect(mocks.verifyAuthenticationResponse).toHaveBeenCalledTimes(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
 describe('challenge expiry', () => {
   it('rejects consuming a challenge whose expiresAt is already in the past', async () => {
     const email = `expired-${randomUUID()}@example.com`

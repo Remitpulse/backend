@@ -205,8 +205,10 @@ export class WebAuthnService {
       where: { subject, purpose },
       orderBy: { createdAt: 'desc' },
     })
-    if (record) await prisma.webAuthnChallenge.deleteMany({ where: { subject, purpose } })
-    if (!record || record.expiresAt < new Date()) {
+    // Claim this exact row atomically. Deleting by subject after a read both allowed
+    // concurrent consumers and could delete newer options created in the meantime.
+    const claimed = record ? await prisma.webAuthnChallenge.deleteMany({ where: { id: record.id } }) : { count: 0 }
+    if (!record || claimed.count !== 1 || record.expiresAt <= new Date()) {
       throw new BadRequestError('WebAuthn challenge missing or expired; request new options', undefined, 'CHALLENGE_EXPIRED')
     }
     return record.challenge

@@ -27,13 +27,16 @@ export async function authenticateWithAnchor(anchorDomain: string, account: Keyp
   const challenge = await requestJson<ChallengeResponse>('anchor', toml.webAuthEndpoint, {
     query: {
       account: account.publicKey(),
-      home_domain: env.SEP10_HOME_DOMAIN,
+      home_domain: anchorDomain,
       client_domain: env.SEP10_CLIENT_DOMAIN,
     },
     timeoutMs: env.ANCHOR_REQUEST_TIMEOUT_MS,
   })
 
-  const tx = parseChallenge(challenge.transaction, account.publicKey(), toml.signingKey)
+  if (challenge.network_passphrase && challenge.network_passphrase !== STELLAR.networkPassphrase) {
+    throw new UpstreamError('anchor', 'challenge network passphrase mismatch')
+  }
+  const tx = parseChallenge(challenge.transaction, account.publicKey(), toml.signingKey, toml.webAuthEndpoint, anchorDomain)
 
   tx.sign(account)
   if (env.SEP10_CLIENT_DOMAIN_SECRET) tx.sign(Keypair.fromSecret(env.SEP10_CLIENT_DOMAIN_SECRET))
@@ -50,7 +53,7 @@ export async function authenticateWithAnchor(anchorDomain: string, account: Keyp
 }
 
 /** Validates the anchor's challenge transaction before the caller signs it. */
-function parseChallenge(xdrTx: string, account: string, anchorSigningKey: string): Transaction {
+function parseChallenge(xdrTx: string, account: string, anchorSigningKey: string, endpoint: string, homeDomain: string): Transaction {
   let tx: Transaction | ReturnType<typeof TransactionBuilder.fromXDR>
   try {
     tx = TransactionBuilder.fromXDR(xdrTx, STELLAR.networkPassphrase)
@@ -60,16 +63,47 @@ function parseChallenge(xdrTx: string, account: string, anchorSigningKey: string
   if (!(tx instanceof Transaction)) throw new UpstreamError('anchor', 'challenge must not be a fee-bump transaction')
   if (tx.source !== anchorSigningKey) throw new UpstreamError('anchor', 'challenge source does not match stellar.toml SIGNING_KEY')
   if (tx.sequence !== '0') throw new UpstreamError('anchor', 'challenge transaction sequence must be 0')
+  const anchor = Keypair.fromPublicKey(anchorSigningKey)
+  const signedByAnchor = tx.signatures.some(signature => {
+    try {
+      return anchor.verify(tx.hash(), signature.signature())
+    } catch {
+      return false
+    }
+  })
+  if (!signedByAnchor) throw new UpstreamError('anchor', 'challenge is not signed by the anchor SIGNING_KEY')
 
   const first = tx.operations[0]
   if (!first || first.type !== 'manageData' || first.source !== account) {
     throw new UpstreamError('anchor', 'challenge first operation must be ManageData sourced by the client account')
   }
-  if (first.name !== `${env.SEP10_HOME_DOMAIN} auth`) {
-    throw new UpstreamError('anchor', `challenge home domain mismatch (expected "${env.SEP10_HOME_DOMAIN} auth")`)
+  if (first.name !== `${homeDomain} auth`) {
+    throw new UpstreamError('anchor', `challenge home domain mismatch (expected "${homeDomain} auth")`)
   }
   const value = first.value
-  if (!value || value.length !== 64) throw new UpstreamError('anchor', 'challenge nonce must be 64 random bytes')
+  if (!value || !/^[A-Za-z0-9+/]{64}$/.test(value.toString('ascii')) || Buffer.from(value.toString(), 'base64').length !== 48) {
+    throw new UpstreamError('anchor', 'challenge nonce must encode 48 random bytes as base64')
+  }
+
+  for (const operation of tx.operations.slice(1)) {
+    if (operation.type !== 'manageData') throw new UpstreamError('anchor', 'challenge contains a non-ManageData operation')
+    if (operation.name === 'client_domain') {
+      const clientKey = env.SEP10_CLIENT_DOMAIN_SECRET ? Keypair.fromSecret(env.SEP10_CLIENT_DOMAIN_SECRET).publicKey() : undefined
+      if (
+        !env.SEP10_CLIENT_DOMAIN ||
+        !clientKey ||
+        operation.source !== clientKey ||
+        operation.value?.toString() !== env.SEP10_CLIENT_DOMAIN
+      ) {
+        throw new UpstreamError('anchor', 'challenge client_domain mismatch')
+      }
+    } else {
+      if (operation.source !== anchorSigningKey) throw new UpstreamError('anchor', 'challenge operation source must be the anchor')
+      if (operation.name === 'web_auth_domain' && operation.value?.toString() !== new URL(endpoint).hostname) {
+        throw new UpstreamError('anchor', 'challenge web_auth_domain mismatch')
+      }
+    }
+  }
 
   const timeBounds = tx.timeBounds
   if (!timeBounds) throw new UpstreamError('anchor', 'challenge transaction is missing time bounds')
