@@ -30,7 +30,7 @@
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
-    "@sentry/node": "^11.9.0",
+    "@sentry/node": "^11.11.0",
     "@simplewebauthn/server": "^14.0.3",
     "@stellar/stellar-sdk": "^14.6.1",
     "big.js": "^7.0.1",
