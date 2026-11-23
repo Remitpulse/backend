@@ -1,23 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
-    "lib": ["ES2022"],
-    "outDir": "dist",
-    "rootDir": ".",
+    "target": "ES2024",
+    "module": "NodeNext",
+    "types": ["node"],
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true,
-    "sourceMap": true,
-    "types": ["node"]
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true
   },
-  "include": ["src", "prisma", "scripts", "test"]
+  "include": ["casino/**/*.ts"]
 }

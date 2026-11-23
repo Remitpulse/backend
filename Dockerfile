@@ -1,33 +1,10 @@
-FROM node:24-slim AS build
+FROM node:24-slim
 WORKDIR /app
-# Only used by `prisma generate` to resolve the config at build time; the client
-# connects with the real DATABASE_URL at runtime via the pg driver adapter.
-ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-RUN npx prisma generate
-COPY tsconfig.json tsconfig.build.json ./
-COPY src ./src
-RUN npm run build
-
-FROM node:24-slim AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-# Only used by `prisma generate` to resolve the config at build time; the client
-# connects with the real DATABASE_URL at runtime via the pg driver adapter.
-ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
-RUN apt-get update && apt-get install -y --no-install-recommends openssl curl && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json ./
+COPY package*.json ./
 RUN npm ci --omit=dev
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-RUN npx prisma generate
-COPY --from=build /app/dist ./dist
-
-EXPOSE 8080
+COPY casino ./casino
+RUN mkdir /data && chown node:node /data
 USER node
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD curl -fsS http://localhost:8080/v1/health || exit 1
-CMD ["node", "dist/server.js"]
+ENV CASINO_HOST=0.0.0.0 CASINO_DATA_DIR=/data PORT=4010
+EXPOSE 4010
+CMD ["npm", "start"]
