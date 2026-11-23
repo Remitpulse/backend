@@ -87,7 +87,7 @@ let retryAt = 0
 
 const supplemental = new Map<string, { until: number; request: Promise<FootballFixture[]> }>()
 
-export async function currentFootballResults(token: string, events: string[]) {
+export async function currentFootballResults(token: string, events: string[], fetcher = fetch) {
   if (!events.length) return []
   const batch = events.slice(0, 25)
   const key = JSON.stringify([...batch].sort())
@@ -95,7 +95,7 @@ export async function currentFootballResults(token: string, events: string[]) {
   const existing = supplemental.get(key)
   if (existing && existing.until > now) return existing.request
 
-  const request = loadFootballResults(token, batch).catch(() => [])
+  const request = loadFootballResults(token, batch, fetcher).catch(() => [])
   supplemental.delete(key)
   supplemental.set(key, { until: now + freshness, request })
   if (supplemental.size > 128) {

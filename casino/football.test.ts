@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { footballFixture, loadFootballFixtures, loadFootballResults } from './football.ts'
+import { currentFootballResults, footballFixture, loadFootballFixtures, loadFootballResults } from './football.ts'
 
 const match = {
   id: 123,
@@ -68,4 +68,20 @@ test('drops malformed and ambiguous provider rows while preserving valid fixture
   assert.equal(fixtures.length, 1)
   assert.equal(fixtures[0].id, 'football-data:126')
   assert.equal(fixtures[0].home, 'Home')
+})
+
+test('coalesces supplemental checks for the same set of provider matches', async () => {
+  let calls = 0
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return Response.json({ matches: [{ ...match, id: 700 }, { ...match, id: 701 }] })
+  }
+  const events = ['football-data:700', 'football-data:701']
+  const [first, second] = await Promise.all([
+    currentFootballResults('fixture-token', events, fetcher),
+    currentFootballResults('fixture-token', [...events].reverse(), fetcher),
+  ])
+  assert.deepEqual(first, second)
+  assert.equal(first.length, 2)
+  assert.equal(calls, 1)
 })
