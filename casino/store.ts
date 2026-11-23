@@ -33,6 +33,12 @@ export function db() {
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, wallet TEXT NOT NULL,
       amount TEXT NOT NULL, xdr TEXT NOT NULL, credited INTEGER NOT NULL DEFAULT 0
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS dice_commitment (
+      player TEXT PRIMARY KEY, commitment TEXT NOT NULL, seed TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS dice_proof (
+      entry TEXT PRIMARY KEY, proof TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS signed_deposit (
       hash TEXT PRIMARY KEY, xdr TEXT NOT NULL
     ) STRICT;
@@ -69,9 +75,11 @@ export function atomic<T>(action: () => T): T {
 }
 
 export function record(player: string, kind: string, amount: bigint, detail: string, game: string | null = null) {
+  const entry = randomUUID()
   db()
     .prepare('INSERT INTO entry VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(randomUUID(), player, kind, game, amount, detail, new Date().toISOString())
+    .run(entry, player, kind, game, amount, detail, new Date().toISOString())
+  return entry
 }
 
 export function createPlayer(id: string) {
