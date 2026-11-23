@@ -18,7 +18,7 @@ test('operator recovery credits a confirmed deposit once even during concurrent 
   await assert.rejects(reconcileTestnetTransfer(hash, confirmed), /No signed or reserved transfer/)
   db().prepare('INSERT INTO signed_deposit VALUES (?, ?)').run(hash, 'signed')
   await assert.rejects(reconcileTestnetTransfer(hash, async () => ({ status: 'not-found', ledger: null })),
-    /requires a successful Testnet receipt/)
+    /requires a confirmed Testnet receipt/)
   assert.equal(player(id)?.testnet, 0n)
 
   await Promise.all([reconcileTestnetTransfer(hash, confirmed), reconcileTestnetTransfer(hash, confirmed)])
@@ -33,8 +33,8 @@ test('confirming a reserved withdrawal clears it without another debit', async (
   db().prepare('UPDATE player SET testnet = ? WHERE id = ?').run(7000001n, id)
   db().prepare('INSERT INTO withdrawal (hash, player, amount, xdr) VALUES (?, ?, ?, ?)')
     .run(hash, id, '2000001', 'signed')
-  await assert.rejects(reconcileTestnetTransfer(hash, async () => ({ status: 'failed', ledger: 41 })),
-    /requires a successful Testnet receipt/)
+  await assert.rejects(reconcileTestnetTransfer(hash, async () => ({ status: 'not-found', ledger: null })),
+    /requires a confirmed Testnet receipt/)
   assert.equal(snapshot(id).withdrawal?.hash, hash)
 
   const confirmed = async () => ({ status: 'confirmed', ledger: 42 })
@@ -42,4 +42,18 @@ test('confirming a reserved withdrawal clears it without another debit', async (
   assert.equal(snapshot(id).withdrawal, null)
   assert.equal(player(id)?.testnet, 7000001n)
   assert.equal(snapshot(id).entries.filter(entry => entry.kind === 'Testnet withdrawal confirmed').length, 1)
+})
+
+
+test('releases a definitively failed withdrawal reserve exactly once', async () => {
+  const id = 'failed-withdrawal'
+  const hash = 'c'.repeat(64)
+  createPlayer(id)
+  db().prepare('INSERT INTO withdrawal (hash, player, amount, xdr) VALUES (?, ?, ?, ?)')
+    .run(hash, id, '2000001', 'signed')
+  const failed = async () => ({ status: 'failed', ledger: 42 })
+  await Promise.all([reconcileTestnetTransfer(hash, failed), reconcileTestnetTransfer(hash, failed)])
+  assert.equal(snapshot(id).withdrawal, null)
+  assert.equal(player(id)?.testnet, 2000001n)
+  assert.equal(snapshot(id).entries.filter(entry => entry.kind === 'Failed Testnet withdrawal released').length, 1)
 })

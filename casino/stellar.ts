@@ -31,6 +31,7 @@ function transaction(xdr: string) {
 export async function testnetTransferStatus(hash: string) {
   try {
     const receipt = await horizon.transactions().transaction(hash).call()
+    if (typeof receipt.successful !== 'boolean') throw new Error('Horizon returned an incomplete transfer receipt.')
     return { status: receipt.successful ? 'confirmed' : 'failed', ledger: receipt.ledger_attr }
   } catch (error) {
     if ((error as { response?: { status?: number } }).response?.status === 404) {
@@ -192,6 +193,17 @@ function confirmWithdrawal(transfer: Transfer) {
   })
 }
 
+function releaseFailedWithdrawal(transfer: Transfer) {
+  return atomic(() => {
+    const released = db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash)
+    if (!released.changes) return false
+    const value = BigInt(transfer.amount)
+    db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, transfer.player)
+    record(transfer.player, 'Failed Testnet withdrawal released', value, transfer.hash)
+    return true
+  })
+}
+
 export async function reconcileTestnetTransfer(hash: string, lookup = testnetTransferStatus) {
   const deposit = db().prepare(
     'SELECT deposit.* FROM deposit JOIN signed_deposit USING (hash) WHERE hash = ?',
@@ -202,7 +214,11 @@ export async function reconcileTestnetTransfer(hash: string, lookup = testnetTra
   if (deposit?.credited || withdrawal?.pending === 0) return { message: 'The transfer is already reconciled.' }
 
   const receipt = await lookup(hash)
-  if (receipt.status !== 'confirmed') throw new Error('Reconciliation requires a successful Testnet receipt.')
+  if (withdrawal && receipt.status === 'failed') {
+    const released = releaseFailedWithdrawal(withdrawal)
+    return { message: released ? 'Failed withdrawal reserve returned to the player.' : 'The transfer is already reconciled.' }
+  }
+  if (receipt.status !== 'confirmed') throw new Error('Reconciliation requires a confirmed Testnet receipt.')
   const changed = deposit ? creditDeposit(deposit) : confirmWithdrawal(withdrawal!)
   return { message: changed ? 'Confirmed transfer reconciled.' : 'The transfer is already reconciled.' }
 }
