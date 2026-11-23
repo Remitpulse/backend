@@ -38,6 +38,21 @@ export async function loadFootballFixtures(token: string, now = Date.now(), fetc
   const url = new URL(endpoint)
   url.searchParams.set('dateFrom', new Date(now - 2 * day).toISOString().slice(0, 10))
   url.searchParams.set('dateTo', new Date(now + 7 * day).toISOString().slice(0, 10))
+  return fetchFootballFixtures(url, token, fetcher)
+}
+
+export async function loadFootballResults(token: string, events: string[], fetcher = fetch) {
+  const ids = events.flatMap(event => {
+    const match = /^football-data:([1-9][0-9]{0,14})$/.exec(event)
+    return match ? [match[1]] : []
+  })
+  if (!ids.length) return []
+  const url = new URL(endpoint)
+  url.searchParams.set('ids', [...new Set(ids)].slice(0, 25).join(','))
+  return fetchFootballFixtures(url, token, fetcher)
+}
+
+async function fetchFootballFixtures(url: URL, token: string, fetcher: typeof fetch) {
   const response = await fetcher(url, {
     headers: { 'X-Auth-Token': token },
     signal: AbortSignal.timeout(6000),

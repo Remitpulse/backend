@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import { atomic, db, player, record } from './store.ts'
 import { parseXlm, STROOPS } from './money.ts'
-import type { FootballFixture } from './football.ts'
+import { currentFootballFixtures, loadFootballResults, type FootballFixture } from './football.ts'
 import type { Command } from './game.ts'
 
 const fixtures = [
@@ -104,6 +104,26 @@ function settle(id: string, now: number, football: FootballFixture[] = []) {
 
 export function refreshSports(id: string, now = Date.now()) {
   atomic(() => settle(id, now))
+}
+
+export async function sportsbookFootball(id: string) {
+  const fixtures = await currentFootballFixtures()
+  const token = process.env.CASINO_FOOTBALL_DATA_TOKEN
+  if (!fixtures || !token) return fixtures
+  const listed = new Set(fixtures.map(fixture => fixture.id))
+  const overdue = db().prepare(
+    `SELECT event FROM sports_ticket WHERE player = ? AND state = 'Open'
+     AND event LIKE 'football-data:%' AND settles <= ? ORDER BY settles`,
+  ).all(id, Date.now()).flatMap(({ event }) =>
+    typeof event === 'string' && !listed.has(event) ? [event] : [],
+  )
+  try {
+    const older = await loadFootballResults(token, overdue)
+    // Supplemental responses can settle existing tickets but never open markets.
+    return [...fixtures, ...older.filter(fixture => overdue.includes(fixture.id) && fixture.status !== 'TIMED')]
+  } catch {
+    return fixtures
+  }
 }
 
 export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null) {
