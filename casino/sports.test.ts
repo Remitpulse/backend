@@ -72,3 +72,35 @@ test('Mines locks the chosen mine count into the round', () => {
   const settled = play('mines-risk', { action: 'reveal', tile: safe, setting: 1 })
   assert.equal(settled.payout, '247500000')
 })
+
+test('provider tickets await regulation results and are settled or refunded only once', () => {
+  const now = 18_000_000
+  const id = 'provider-ticket'
+  createPlayer(id)
+  const timed = {
+    id: 'football-data:123', starts: now + 60_000, sport: 'Football' as const,
+    league: 'Example League', home: 'Home', away: 'Away', status: 'TIMED', result: null,
+  }
+  const second = { ...timed, id: 'football-data:456' }
+  for (const event of [timed, second]) {
+    sportsbook(id, {
+      action: 'sports-place', event: event.id, selection: 0, price: 235, amount: '1.0000001',
+    }, now, [event])
+  }
+  const refresh = (matches: Parameters<typeof sportsbook>[3]) =>
+    sportsbook(id, { action: 'sports-market' }, now + 80_000, matches).sports.tickets
+  assert.ok(refresh(null).every(ticket => ticket.state === 'Open'))
+  assert.ok(refresh([{ ...timed, status: 'POSTPONED' }]).every(ticket => ticket.state === 'Open'))
+  const outcomes = [
+    { ...timed, status: 'FINISHED', result: { winner: 0, score: '2–1' } },
+    { ...second, status: 'CANCELLED' },
+  ]
+  const settled = refresh(outcomes)
+  assert.equal(settled.find(ticket => ticket.event === timed.id)?.payout, '23500002')
+  assert.equal(settled.find(ticket => ticket.event === second.id)?.state, 'Void')
+  assert.equal(settled.find(ticket => ticket.event === second.id)?.payout, '10000001')
+  const balance = player(id)!.demo
+  refresh(outcomes)
+  assert.equal(player(id)!.demo, balance)
+  assert.equal(player(id)!.testnet, 0n)
+})
