@@ -41,6 +41,7 @@ type Ticket = {
   state: 'Open' | 'Won' | 'Lost' | 'Void'
   settles: number
   score: string | null
+  revisedScore: string | null
 }
 
 function tickets(id: string) {
@@ -48,7 +49,9 @@ function tickets(id: string) {
     .prepare(
       `SELECT id, event, label, selection, selection_label AS selectionLabel,
     price, CAST(stake AS TEXT) AS stake, CAST(payout AS TEXT) AS payout,
-    state, settles, score FROM sports_ticket WHERE player = ? ORDER BY rowid DESC LIMIT 30`
+    state, settles, score,
+    (SELECT revision.score FROM sports_result_revision revision WHERE revision.event = sports_ticket.event) AS revisedScore
+    FROM sports_ticket WHERE player = ? ORDER BY rowid DESC LIMIT 30`
     )
     .all(id) as Ticket[]
 }
@@ -126,9 +129,27 @@ export async function sportsbookFootball(id: string) {
   }
 }
 
+function recordFootballRevisions(football: FootballFixture[], now: number) {
+  const settled = db().prepare('SELECT score FROM sports_result WHERE event = ?')
+  const save = db().prepare(
+    `INSERT INTO sports_result_revision VALUES (?, ?, ?)
+     ON CONFLICT(event) DO UPDATE SET score = excluded.score, observed = excluded.observed
+     WHERE score <> excluded.score`,
+  )
+  const clear = db().prepare('DELETE FROM sports_result_revision WHERE event = ?')
+  for (const match of football) {
+    if (!match.result) continue
+    const original = settled.get(match.id)
+    if (!original) continue
+    if (original.score === match.result.score) clear.run(match.id)
+    else save.run(match.id, match.result.score, now)
+  }
+}
+
 export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null) {
   return atomic(() => {
     settle(id, now, football ?? [])
+    if (football?.length) recordFootballRevisions(football, now)
     const window = Math.floor(now / interval)
     const simulated = fixtures.map((_, index) => {
       const previous = market(index, window - 1)

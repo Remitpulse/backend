@@ -60,6 +60,9 @@ export function db() {
     CREATE TABLE IF NOT EXISTS sports_result (
       event TEXT PRIMARY KEY, winner INTEGER NOT NULL, score TEXT NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS sports_result_revision (
+      event TEXT PRIMARY KEY, score TEXT NOT NULL, observed INTEGER NOT NULL
+    ) STRICT;
     CREATE UNIQUE INDEX IF NOT EXISTS treasury_pending ON withdrawal(pending) WHERE pending = 1;
   `)
   connection = database

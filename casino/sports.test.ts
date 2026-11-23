@@ -100,8 +100,12 @@ test('provider tickets await regulation results and are settled or refunded only
   assert.equal(settled.find(ticket => ticket.event === second.id)?.state, 'Void')
   assert.equal(settled.find(ticket => ticket.event === second.id)?.payout, '10000001')
   const balance = player(id)!.demo
-  refresh(outcomes)
+  const revised = refresh([{ ...timed, status: 'FINISHED', result: { winner: 1, score: '2–2' } }])
+    .find(ticket => ticket.event === timed.id)
+  assert.equal(revised?.score, '2–1')
+  assert.equal(revised?.revisedScore, '2–2')
   assert.equal(player(id)!.demo, balance)
+  assert.equal(refresh(outcomes).find(ticket => ticket.event === timed.id)?.revisedScore, null)
   assert.equal(player(id)!.testnet, 0n)
 })
 
