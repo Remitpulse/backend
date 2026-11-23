@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import { atomic, db, player, record } from './store.ts'
 import { parseXlm, STROOPS } from './money.ts'
-import { currentFootballFixtures, loadFootballResults, type FootballFixture } from './football.ts'
+import { currentFootballFixtures, currentFootballResults, type FootballFixture } from './football.ts'
 import type { Command } from './game.ts'
 
 const fixtures = [
@@ -14,6 +14,7 @@ const fixtures = [
 ] as const
 const interval = 180_000
 const duration = 45_000
+const revisionWindow = 14 * 86_400_000
 type Fixture = (typeof fixtures)[number]
 
 function market(index: number, window: number) {
@@ -114,19 +115,17 @@ export async function sportsbookFootball(id: string) {
   const token = process.env.CASINO_FOOTBALL_DATA_TOKEN
   if (!fixtures || !token) return fixtures
   const listed = new Set(fixtures.map(fixture => fixture.id))
+  const now = Date.now()
   const overdue = db().prepare(
-    `SELECT event FROM sports_ticket WHERE player = ? AND state = 'Open'
-     AND event LIKE 'football-data:%' AND settles <= ? ORDER BY settles`,
-  ).all(id, Date.now()).flatMap(({ event }) =>
+    `SELECT event FROM sports_ticket WHERE player = ? AND event LIKE 'football-data:%'
+     AND settles <= ? AND (state = 'Open' OR settles >= ?)
+     ORDER BY (state = 'Open') DESC, CASE WHEN state = 'Open' THEN settles ELSE -settles END`,
+  ).all(id, now, now - revisionWindow).flatMap(({ event }) =>
     typeof event === 'string' && !listed.has(event) ? [event] : [],
   )
-  try {
-    const older = await loadFootballResults(token, overdue)
-    // Supplemental responses can settle existing tickets but never open markets.
-    return [...fixtures, ...older.filter(fixture => overdue.includes(fixture.id) && fixture.status !== 'TIMED')]
-  } catch {
-    return fixtures
-  }
+  const older = await currentFootballResults(token, overdue)
+  // Supplemental responses may settle or revise tickets but never open markets.
+  return [...fixtures, ...older.filter(fixture => overdue.includes(fixture.id) && fixture.status !== 'TIMED')]
 }
 
 function recordFootballRevisions(football: FootballFixture[], now: number) {

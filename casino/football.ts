@@ -85,6 +85,26 @@ let cached: { fetchedAt: number; fixtures: FootballFixture[] } | undefined
 let inFlight: Promise<FootballFixture[] | null> | undefined
 let retryAt = 0
 
+const supplemental = new Map<string, { until: number; request: Promise<FootballFixture[]> }>()
+
+export async function currentFootballResults(token: string, events: string[]) {
+  if (!events.length) return []
+  const batch = events.slice(0, 25)
+  const key = JSON.stringify([...batch].sort())
+  const now = Date.now()
+  const existing = supplemental.get(key)
+  if (existing && existing.until > now) return existing.request
+
+  const request = loadFootballResults(token, batch).catch(() => [])
+  supplemental.delete(key)
+  supplemental.set(key, { until: now + freshness, request })
+  if (supplemental.size > 128) {
+    const first = supplemental.keys().next().value
+    if (first !== undefined) supplemental.delete(first)
+  }
+  return request
+}
+
 export async function currentFootballFixtures(): Promise<FootballFixture[] | null> {
   const token = process.env.CASINO_FOOTBALL_DATA_TOKEN
   if (!token) return null
