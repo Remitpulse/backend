@@ -57,14 +57,15 @@ async function report() {
   const pending = database
     .prepare(
       `
-    SELECT hash, amount FROM withdrawal WHERE pending = 1
+    SELECT withdrawal.hash, withdrawal.amount, player.wallet
+    FROM withdrawal JOIN player ON player.id = withdrawal.player WHERE withdrawal.pending = 1
   `
     )
     .all()
   const pendingDeposits = database
     .prepare(
       `
-    SELECT deposit.hash, deposit.amount FROM deposit JOIN signed_deposit USING (hash)
+    SELECT deposit.hash, deposit.amount, deposit.wallet FROM deposit JOIN signed_deposit USING (hash)
     WHERE deposit.credited = 0 ORDER BY deposit.rowid ASC LIMIT 100
   `
     )
