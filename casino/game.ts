@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto'
 import { atomic, db, minesPayout, player, record } from './store.ts'
+import { tableGame } from './table-games.ts'
 import { parseXlm, STROOPS } from './money.ts'
 
 export type Command = Record<string, unknown>
@@ -31,19 +32,19 @@ export function play(id: string, input: Command) {
         if (mines.includes(tile)) {
           db().prepare('UPDATE player SET mines = NULL, stake = NULL, picks = NULL WHERE id = ?').run(id)
           record(id, 'Result', 0n, 'Mine hit', 'Mines')
-          return { message: 'Mine hit. Round ended.', mines, bust: true }
+          return { message: 'Mine hit. Round ended.', mines, safe: picks, bust: true }
         }
         picks.push(tile)
-        if (picks.length < 22) {
+        if (picks.length < 25 - mines.length) {
           db().prepare('UPDATE player SET picks = ? WHERE id = ?').run(JSON.stringify(picks), id)
           return { message: 'Gem found.' }
         }
       }
       if (picks.length === 0) throw new Error('Reveal a gem before cashing out.')
-      const payout = minesPayout(stake, picks.length)
+      const payout = minesPayout(stake, picks.length, mines.length)
       db().prepare('UPDATE player SET mines = NULL, stake = NULL, picks = NULL, demo = demo + ? WHERE id = ?').run(payout, id)
       record(id, 'Payout', payout, `${picks.length} gems revealed`, 'Mines')
-      return { message: 'Mines paid out.', payout: payout.toString(), mines }
+      return { message: 'Mines paid out.', payout: payout.toString(), mines, safe: picks }
     }
 
     if (input.action !== 'play') throw new Error('Choose a game action.')
@@ -57,6 +58,7 @@ export function play(id: string, input: Command) {
     let result: string
     let payout = 0n
     let path: number[] | undefined
+    let detail: { board?: number[]; hand?: ReturnType<typeof tableGame>['hand'] } = {}
 
     switch (input.game) {
       case 'dice': {
@@ -94,20 +96,26 @@ export function play(id: string, input: Command) {
       case 'mines': {
         if (state.stake) throw new Error('Finish the open Mines round first.')
         const mines = new Set<number>()
-        while (mines.size < 3) mines.add(randomInt(25))
+        const count = input.setting === undefined ? 3 : integer(input.setting, 1, 24)
+        while (mines.size < count) mines.add(randomInt(25))
         db()
           .prepare('UPDATE player SET demo = demo - ?, mines = ?, stake = ?, picks = ? WHERE id = ?')
           .run(stake, JSON.stringify([...mines]), stake.toString(), '[]', id)
-        record(id, 'Wager', -stake, '3 mines', 'Mines')
+        record(id, 'Wager', -stake, count + ' mines', 'Mines')
         return { message: 'Choose a tile.' }
       }
-      default:
-        throw new Error('Choose a game.')
+      default: {
+        const settled = tableGame(input, stake)
+        title = settled.title
+        result = settled.result
+        payout = settled.payout
+        detail = { board: settled.board, hand: settled.hand }
+      }
     }
 
     db().prepare('UPDATE player SET demo = demo - ? + ? WHERE id = ?').run(stake, payout, id)
     record(id, 'Wager', -stake, 'Demo wager', title)
     record(id, payout > 0n ? 'Payout' : 'Result', payout, result, title)
-    return { message: result, payout: payout.toString(), ...(path && { path }) }
+    return { message: result, payout: payout.toString(), ...(path && { path }), ...detail }
   })
 }

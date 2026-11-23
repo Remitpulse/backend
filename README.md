@@ -1,11 +1,32 @@
-# RemitPulse casino backend
+# RemitPulse casino and sportsbook backend
 
-Use Node.js 24, run `npm ci`, then `npm start`. The service listens on `127.0.0.1:4010` by default. Use the same checkout layout as the frontend. Copy `.env.example` to `.env` to configure your own environment.
+This Node.js 24 service owns game outcomes, sports tickets, and an exact XLM ledger in SQLite. Every XLM equals 10,000,000 stroops.
 
-- **Simulation.** Every demo player starts with 1,000 simulated XLM. Cryptographic server draws and exact integer journal entries run inside SQLite transactions. The database stores native and simulated claims in separate balances. Every XLM equals 10,000,000 stroops. Public seed verification is outside this milestone.
-- **Testnet custody.** Set `CASINO_TESTNET_TREASURY_SECRET` to a funded, dedicated Stellar Testnet account. The browser signs a native deposit with Freighter. The backend credits the verified transaction hash once and binds the wallet address. Withdrawals reserve native Testnet balance first and send to the linked wallet. The same signed envelope is retried during reconciliation.
-- **Operator.** Set a strong `CASINO_ADMIN_TOKEN` to enable the XLM report. Reserve counts and available Testnet balances are reported separately. A pending transfer that stays unresolved after expiry requires operator reconciliation using the recorded hash and the Testnet ledger. Keep the treasury exclusive to the service to avoid sequence conflicts.
-- **Passkeys.** Set `CASINO_PUBLIC_ORIGIN` to the exact browser origin. Use HTTPS and `CASINO_SECURE_COOKIE=1` outside local development. The default origin is `http://localhost:3000`.
-- **Deployment.** This milestone expects a single backend service and a persistent volume for `CASINO_DATA_DIR`. Back up the database with SQLite-aware tools and keep treasury secrets outside Git.
+## Start locally
 
-`npm test` exercises exact stroop arithmetic, server game settlement, and Mines round state. The self-attestation in Testnet is a demo control. Real-money authorization, identity and jurisdiction checks, independent fairness review, and production payment operations are outside this milestone.
+```sh
+npm ci
+npm start
+```
+
+The default bind address is `127.0.0.1:4010`. Copy `.env.example` to `.env` for local overrides. Run `npm run typecheck` and `npm test` to verify the service.
+
+## Games and sportsbook
+
+- Each new demo account receives 1,000 simulated XLM. Wagers, payouts and balances use integer stroops. Server-side random draws determine casino outcomes.
+- Mines stores the full board on the server, locks the selected mine count, and returns the current and next-safe-tile payout estimates. The board is revealed when the round ends.
+- Casino results include the data needed for the interface to show the outcome, such as drawn cards, Keno numbers, or the Plinko path.
+- Fictional football, basketball and tennis fixtures have server-quoted decimal odds. The sportsbook enforces the kickoff cutoff, reserves the stake and settles each eligible ticket once against a shared match result. Due tickets settle when the player refreshes the market or session.
+- The shared ledger keeps simulated credits separate from withdrawable Testnet XLM. Public seed verification is outside this milestone.
+
+## Stellar Testnet and passkeys
+
+Set `CASINO_TESTNET_TREASURY_SECRET` to a funded Testnet-only Stellar account to enable native XLM deposits and withdrawals. Freighter signs deposits. The backend credits a verified transaction hash once. Withdrawals reserve Testnet funds and send them to the linked wallet. Retries use the same signed envelope. Unresolved transfers after expiry require operator reconciliation against the recorded transaction hash.
+
+Set `CASINO_ADMIN_TOKEN` to enable the operator report. Set `CASINO_PUBLIC_ORIGIN` to the exact frontend origin for passkeys. Use HTTPS and `CASINO_SECURE_COOKIE=1` outside local development.
+
+## Deploy both services
+
+Place the frontend and backend checkouts side by side, with the frontend directory named `frontend`. From the backend checkout, run `docker compose up --build --wait`. The frontend binds to loopback on port 3000. The private backend stores the ledger on the `casino-ledger` volume.
+
+On a remote host, forward HTTPS requests to `127.0.0.1:3000`. Set `CASINO_PUBLIC_ORIGIN` without a trailing slash and `CASINO_SECURE_COOKIE=1` in the backend checkout’s `.env`. Keep Testnet signing secrets outside Git. Back up the database using SQLite-aware tools. Real-money authorization and jurisdiction checks are outside this milestone.

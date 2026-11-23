@@ -1,0 +1,39 @@
+name: Compose deployment smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [stellar-casino-milestone]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: backend
+      - uses: actions/checkout@v6
+        with:
+          repository: Remitpulse/frontend
+          ref: stellar-casino-milestone
+          path: frontend
+      - name: Start the deployment
+        working-directory: backend
+        run: docker compose up --build --wait
+      - name: Verify the frontend, sportsbook, and persistent ledger
+        working-directory: backend
+        run: |
+          curl -fsS http://localhost:3000/ >/dev/null
+          jar="$RUNNER_TEMP/casino-cookies"
+          curl -fsS -c "$jar" http://localhost:3000/api/casino | jq -e '.state.demo == "10000000000"'
+          curl -fsS -b "$jar" -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+            -d '{"action":"sports-market"}' http://localhost:3000/api/casino | jq -e '.sports.events | length == 6'
+          docker compose up -d --force-recreate --no-deps --wait casino
+          curl -fsS -b "$jar" http://localhost:3000/api/casino | jq -e '.state.demo == "10000000000"'
+      - name: Show service logs on failure
+        if: failure()
+        working-directory: backend
+        run: docker compose logs
+      - name: Stop the smoke deployment
+        if: always()
+        working-directory: backend
+        run: docker compose down --volumes

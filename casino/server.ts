@@ -1,3 +1,4 @@
+import { refreshSports, sportsbook } from './sports.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createPlayer, db, player, snapshot } from './store.ts'
@@ -109,7 +110,10 @@ createServer(async (request, response) => {
       createPlayer(id)
       issueSession(response, id)
     }
-    if (request.method === 'GET') return send(response, 200, { state: state(id) })
+    if (request.method === 'GET') {
+      refreshSports(id)
+      return send(response, 200, { state: state(id) })
+    }
     if (!request.headers['content-type']?.startsWith('application/json')) return send(response, 415, { error: 'Use a JSON request.' })
     const input = await body(request)
     if (typeof input.action === 'string' && input.action.startsWith('passkey-')) {
@@ -122,7 +126,12 @@ createServer(async (request, response) => {
       }
       return send(response, 200, { state: state(login || id), ...result })
     }
-    const result = walletCommands.has(String(input.action)) ? await payment(id, input) : play(id, input)
+    const result =
+      input.action === 'sports-market' || input.action === 'sports-place'
+        ? sportsbook(id, input)
+        : walletCommands.has(String(input.action))
+          ? await payment(id, input)
+          : play(id, input)
     return send(response, 200, { state: state(id), ...result })
   } catch (error) {
     const detail = (error as Error).message

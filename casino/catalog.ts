@@ -15,7 +15,7 @@ export type Entry = {
   created: string
   detail: string
 }
-export type Round = { stake: string; picks: number[]; payout: string }
+export type Round = { stake: string; picks: number[]; mineCount: number; payout: string; nextPayout: string }
 export type CasinoState = {
   demo: string
   testnet: string

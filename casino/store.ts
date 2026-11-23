@@ -40,6 +40,15 @@ export function db() {
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, amount TEXT NOT NULL,
       xdr TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 1
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS sports_ticket (
+      id TEXT PRIMARY KEY, player TEXT NOT NULL, event TEXT NOT NULL, label TEXT NOT NULL,
+      selection INTEGER NOT NULL, selection_label TEXT NOT NULL, price INTEGER NOT NULL, stake INTEGER NOT NULL,
+      settles INTEGER NOT NULL, payout INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'Open', score TEXT,
+      UNIQUE(player, event)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS sports_result (
+      event TEXT PRIMARY KEY, winner INTEGER NOT NULL, score TEXT NOT NULL
+    ) STRICT;
     CREATE UNIQUE INDEX IF NOT EXISTS treasury_pending ON withdrawal(pending) WHERE pending = 1;
   `)
   connection = database
@@ -88,12 +97,12 @@ export function player(id: string): Player | undefined {
   return statement.get(id) as Player | undefined
 }
 
-export function minesPayout(stake: bigint, count: number) {
+export function minesPayout(stake: bigint, count: number, mines = 3) {
   let numerator = stake * 99n
   let denominator = 100n
   for (let i = 0; i < count; i++) {
     numerator *= BigInt(25 - i)
-    denominator *= BigInt(22 - i)
+    denominator *= BigInt(25 - mines - i)
   }
   return numerator / denominator
 }
@@ -105,6 +114,7 @@ export function snapshot(id: string): CasinoState {
       'SELECT id, kind, game, CAST(amount AS TEXT) AS amount, detail, created FROM entry WHERE player = ? ORDER BY rowid DESC LIMIT 40'
     )
     .all(id) as Entry[]
+  const mineCount = state.mines ? (JSON.parse(state.mines) as number[]).length : 3
   const picks: number[] = state.picks ? JSON.parse(state.picks) : []
   const withdrawal = db().prepare('SELECT hash, amount FROM withdrawal WHERE player = ? AND pending = 1').get(id) as
     CasinoState['withdrawal'] | undefined
@@ -122,7 +132,15 @@ export function snapshot(id: string): CasinoState {
     entries,
     paused: state.paused === 1n,
     walletEnabled: Boolean(process.env.CASINO_TESTNET_TREASURY_SECRET),
-    round: state.stake ? { stake: state.stake, picks, payout: minesPayout(BigInt(state.stake), picks.length).toString() } : null,
+    round: state.stake
+      ? {
+          stake: state.stake,
+          picks,
+          mineCount,
+          payout: minesPayout(BigInt(state.stake), picks.length, mineCount).toString(),
+          nextPayout: minesPayout(BigInt(state.stake), picks.length + 1, mineCount).toString(),
+        }
+      : null,
     deposit: deposit || null,
     withdrawal: withdrawal || null,
   }

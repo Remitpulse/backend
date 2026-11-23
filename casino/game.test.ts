@@ -49,3 +49,31 @@ test('Mines keeps the board private, pays once and honors pausing', () => {
   assert.throws(() => play('mines', { action: 'cashout' }))
   assert.throws(() => play('mines', { action: 'play', game: 'coin', setting: 'Heads', amount: '1' }))
 })
+
+test('table and draw games emit valid outcomes and settle only the demo balance', () => {
+  createPlayer('table-draw')
+  const id = 'table-draw'
+  const commands = [
+    { game: 'roulette', setting: 'Red' },
+    { game: 'keno', setting: [1, 2, 3, 4, 5] },
+    { game: 'wheel' },
+    { game: 'baccarat', setting: 'Player' },
+  ]
+  for (const command of commands) {
+    const before = player(id)!.demo
+    const result = play(id, { action: 'play', amount: '0.1234567', ...command })
+    assert.equal(player(id)!.demo, before - 1234567n + BigInt(result.payout!))
+    assert.equal(player(id)!.testnet, 0n)
+    assert.ok('board' in result)
+    if (command.game === 'keno') {
+      assert.equal(result.board?.length, 10)
+      assert.equal(new Set(result.board).size, 10)
+    }
+    if (command.game === 'roulette') assert.ok(result.board?.[0] !== undefined && result.board[0] <= 36)
+    if (command.game === 'wheel') assert.ok(result.board?.[0] !== undefined && result.board[0] < 12)
+    if (command.game === 'baccarat') assert.ok(result.hand?.player && result.hand.banker)
+  }
+  const balance = player(id)!.demo
+  assert.throws(() => play(id, { action: 'play', game: 'keno', amount: '1', setting: [1, 1, 2, 3, 4] }))
+  assert.equal(player(id)!.demo, balance)
+})
