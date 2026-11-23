@@ -28,14 +28,22 @@ function transaction(xdr: string) {
   return tx
 }
 
-async function settle(xdr: string, hash: string) {
+export async function testnetTransferStatus(hash: string) {
   try {
-    const confirmed = await horizon.transactions().transaction(hash).call()
-    if (!confirmed.successful) throw new Error('The Testnet transaction failed.')
-    return
+    const receipt = await horizon.transactions().transaction(hash).call()
+    return { status: receipt.successful ? 'confirmed' : 'failed', ledger: receipt.ledger_attr }
   } catch (error) {
-    if ((error as { response?: { status?: number } }).response?.status !== 404) throw error
+    if ((error as { response?: { status?: number } }).response?.status === 404) {
+      return { status: 'not-found', ledger: null }
+    }
+    throw error
   }
+}
+
+async function settle(xdr: string, hash: string) {
+  const receipt = await testnetTransferStatus(hash)
+  if (receipt.status === 'confirmed') return
+  if (receipt.status === 'failed') throw new Error('The Testnet transaction failed.')
   const confirmed = await horizon.submitTransaction(transaction(xdr))
   if (confirmed.hash !== hash) throw new Error('Unexpected Stellar transaction hash.')
 }
