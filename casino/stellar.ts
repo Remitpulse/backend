@@ -132,13 +132,7 @@ export async function payment(id: string, input: Command) {
     }
 
     await settle(envelope, hash)
-    atomic(() => {
-      const credited = db().prepare('UPDATE deposit SET credited = 1 WHERE hash = ? AND credited = 0').run(hash)
-      if (!credited.changes) return
-      const value = BigInt(intent.amount)
-      db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, id)
-      record(id, 'Testnet deposit', value, hash)
-    })
+    creditDeposit(intent)
     return { message: 'Testnet deposit confirmed.', hash }
   }
 
@@ -174,12 +168,43 @@ export async function payment(id: string, input: Command) {
   } catch {
     throw new Error('Withdrawal is reserved, awaiting Testnet confirmation. Retry confirmation from the wallet panel.')
   }
-  atomic(() => {
-    if (db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash).changes) {
-      record(id, 'Testnet withdrawal confirmed', 0n, transfer.hash)
-    }
-  })
+  confirmWithdrawal(transfer)
   return { message: 'Testnet withdrawal confirmed.', hash: transfer.hash }
+}
+
+function creditDeposit(intent: Deposit) {
+  return atomic(() => {
+    const credited = db().prepare('UPDATE deposit SET credited = 1 WHERE hash = ? AND credited = 0').run(intent.hash)
+    if (!credited.changes) return false
+    const value = BigInt(intent.amount)
+    db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, intent.player)
+    record(intent.player, 'Testnet deposit', value, intent.hash)
+    return true
+  })
+}
+
+function confirmWithdrawal(transfer: Transfer) {
+  return atomic(() => {
+    const confirmed = db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash)
+    if (!confirmed.changes) return false
+    record(transfer.player, 'Testnet withdrawal confirmed', 0n, transfer.hash)
+    return true
+  })
+}
+
+export async function reconcileTestnetTransfer(hash: string) {
+  const deposit = db().prepare(
+    'SELECT deposit.* FROM deposit JOIN signed_deposit USING (hash) WHERE hash = ?',
+  ).get(hash) as Deposit | undefined
+  const withdrawal = db().prepare('SELECT * FROM withdrawal WHERE hash = ?').get(hash) as
+    (Transfer & { pending: number }) | undefined
+  if (!deposit && !withdrawal) throw new Error('No signed or reserved transfer matches this hash.')
+  if (deposit?.credited || withdrawal?.pending === 0) return { message: 'The transfer is already reconciled.' }
+
+  const receipt = await testnetTransferStatus(hash)
+  if (receipt.status !== 'confirmed') throw new Error('Reconciliation requires a successful Testnet receipt.')
+  const changed = deposit ? creditDeposit(deposit) : confirmWithdrawal(withdrawal!)
+  return { message: changed ? 'Confirmed transfer reconciled.' : 'The transfer is already reconciled.' }
 }
 
 export async function treasuryBalance() {

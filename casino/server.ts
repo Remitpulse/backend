@@ -5,7 +5,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createPlayer, db, player, snapshot } from './store.ts'
 import { play } from './game.ts'
 import { hasPasskey, passkey } from './passkeys.ts'
-import { payment, treasuryBalance, testnetTransferStatus, walletBalance } from './stellar.ts'
+import { payment, treasuryBalance, testnetTransferStatus, reconcileTestnetTransfer, walletBalance } from './stellar.ts'
 
 const port = Number(process.env.PORT || '4010')
 const host = process.env.CASINO_HOST || '127.0.0.1'
@@ -110,10 +110,11 @@ createServer(async (request, response) => {
   const url = request.url
   try {
     if (url === '/health' && request.method === 'GET') return send(response, 200, { status: 'ok', network: 'stellar-testnet' })
-    if (url?.startsWith('/admin/transfer/') && request.method === 'GET') {
+    if (url?.startsWith('/admin/transfer/') && (request.method === 'GET' || request.method === 'POST')) {
       if (!adminAllowed(request.headers.authorization)) return send(response, 401, { error: 'Enter a valid operator token.' })
       const hash = url.slice('/admin/transfer/'.length)
       if (!/^[a-f0-9]{64}$/.test(hash)) return send(response, 400, { error: 'Invalid transfer hash.' })
+      if (request.method === 'POST') return send(response, 200, await reconcileTestnetTransfer(hash))
       const exists = db().prepare(
         'SELECT hash FROM deposit WHERE hash = ? UNION ALL SELECT hash FROM withdrawal WHERE hash = ? LIMIT 1',
       ).get(hash, hash)
