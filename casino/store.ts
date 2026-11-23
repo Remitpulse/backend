@@ -133,7 +133,13 @@ export function snapshot(id: string): CasinoState {
     paused: state.paused === 1n,
     walletEnabled: Boolean(process.env.CASINO_TESTNET_TREASURY_SECRET),
     round: state.stake
-      ? { stake: state.stake, picks, mineCount, payout: minesPayout(BigInt(state.stake), picks.length, mineCount).toString() }
+      ? {
+          stake: state.stake,
+          picks,
+          mineCount,
+          payout: minesPayout(BigInt(state.stake), picks.length, mineCount).toString(),
+          nextPayout: minesPayout(BigInt(state.stake), picks.length + 1, mineCount).toString(),
+        }
       : null,
     deposit: deposit || null,
     withdrawal: withdrawal || null,

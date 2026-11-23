@@ -66,6 +66,7 @@ test('Mines locks the chosen mine count into the round', () => {
   assert.throws(() => play('mines-risk', { action: 'play', game: 'mines', amount: '1', setting: 25 }))
   play('mines-risk', { action: 'play', game: 'mines', amount: '1', setting: 24 })
   assert.equal(snapshot('mines-risk').round?.mineCount, 24)
+  assert.equal(snapshot('mines-risk').round?.nextPayout, '247500000')
   const hidden = JSON.parse(player('mines-risk')!.mines!) as number[]
   const safe = Array.from({ length: 25 }, (_, i) => i).find(i => !hidden.includes(i))!
   const settled = play('mines-risk', { action: 'reveal', tile: safe, setting: 1 })
