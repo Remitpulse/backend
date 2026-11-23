@@ -9,3 +9,5 @@ Use Node.js 24, run `npm ci`, then `npm start`. The service listens on `127.0.0.
 - **Deployment.** This milestone expects a single backend service and a persistent volume for `CASINO_DATA_DIR`. Back up the database with SQLite-aware tools and keep treasury secrets outside Git.
 
 `npm test` exercises exact stroop arithmetic, server game settlement, and Mines round state. The self-attestation in Testnet is a demo control. Real-money authorization, identity and jurisdiction checks, independent fairness review, and production payment operations are outside this milestone.
+
+The sportsbook simulates football, basketball and tennis on a rolling schedule. It validates the quoted odds and market cutoff, reserves demo stroops at placement, and settles each ticket against one persisted result per match. Settlement runs when the player refreshes the market or session. Fixtures and odds are fictional. The native Stellar Testnet wallet uses a separate balance.
