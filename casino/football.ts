@@ -16,13 +16,18 @@ type Match = {
 }
 type Score = { home?: number | null; away?: number | null }
 
+function label(value: unknown) {
+  return typeof value === 'string' ? value.trim().slice(0, 160) : ''
+}
+
 export function footballFixture(match: Match) {
-  const starts = Date.parse(match.utcDate ?? '')
+  const starts = typeof match.utcDate === 'string' ? Date.parse(match.utcDate) : NaN
   const { id, status } = match
-  const league = match.competition?.name
-  const home = match.homeTeam?.name
-  const away = match.awayTeam?.name
-  if (!Number.isSafeInteger(id) || !Number.isFinite(starts) || !status || !league || !home || !away) return null
+  const league = label(match.competition?.name)
+  const home = label(match.homeTeam?.name)
+  const away = label(match.awayTeam?.name)
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0 || !Number.isFinite(starts) ||
+      typeof status !== 'string' || !status || !league || !home || !away || home === away) return null
   const score = match.score?.duration === 'REGULAR' ? match.score.fullTime : match.score?.regularTime
   const homeGoals = score?.home
   const awayGoals = score?.away
@@ -61,10 +66,16 @@ async function fetchFootballFixtures(url: URL, token: string, fetcher: typeof fe
   if (!response.ok) throw new Error('Football feed unavailable.')
   const payload = await response.json() as { matches?: Match[] }
   if (!Array.isArray(payload?.matches)) throw new Error('Football feed returned an invalid match list.')
-  return payload.matches.flatMap(match => {
-    const fixture = match && footballFixture(match)
-    return fixture ? [fixture] : []
-  })
+  const fixtures = new Map<string, FootballFixture>()
+  const repeated = new Set<string>()
+  for (const match of payload.matches) {
+    const fixture = match && typeof match === 'object' && footballFixture(match)
+    if (!fixture) continue
+    if (fixtures.has(fixture.id)) repeated.add(fixture.id)
+    else fixtures.set(fixture.id, fixture)
+  }
+  for (const id of repeated) fixtures.delete(id)
+  return [...fixtures.values()]
 }
 
 export type FootballFixture = NonNullable<ReturnType<typeof footballFixture>>

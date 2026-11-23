@@ -52,3 +52,20 @@ test('supplemental result lookup batches only distinct provider IDs', async () =
     throw new Error('No provider request was expected.')
   }), [])
 })
+
+
+test('drops malformed and ambiguous provider rows while preserving valid fixtures', async () => {
+  const fixtures = await loadFootballFixtures('fixture-token', Date.parse(match.utcDate), async () =>
+    Response.json({ matches: [
+      match,
+      { ...match, status: 'TIMED' },
+      { ...match, id: 124, homeTeam: { name: { malformed: true } } },
+      { ...match, id: 125, homeTeam: { name: '   ' } },
+      { ...match, id: -1 },
+      { ...match, id: 126, homeTeam: { name: ' Home ' } },
+    ] }),
+  )
+  assert.equal(fixtures.length, 1)
+  assert.equal(fixtures[0].id, 'football-data:126')
+  assert.equal(fixtures[0].home, 'Home')
+})
