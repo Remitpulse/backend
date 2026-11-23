@@ -69,6 +69,13 @@ async function report() {
   `
     )
     .all()
+  const footballRevisions = database.prepare(
+    `SELECT r.event, original.score AS originalScore, r.score AS revisedScore, r.observed,
+       (SELECT COUNT(*) FROM sports_ticket ticket
+        WHERE ticket.event = r.event AND ticket.state <> 'Open') AS settledTickets
+     FROM sports_result_revision r JOIN sports_result original ON original.event = r.event
+     ORDER BY r.observed DESC, r.event LIMIT 50`,
+  ).all()
   const reserved = pending.reduce((sum, transfer) => sum + BigInt(String(transfer.amount)), 0n)
   const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
   let treasury = null
@@ -83,7 +90,7 @@ async function report() {
     liabilities: liabilities.toString(),
     grossDifference: treasury === null ? null : (BigInt(treasury) - liabilities).toString(),
   }
-  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits, reconciliation }
+  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits, reconciliation, footballRevisions }
 }
 
 function sessionCookie(response: ServerResponse, token: string) {
