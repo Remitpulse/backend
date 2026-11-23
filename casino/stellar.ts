@@ -138,7 +138,7 @@ export async function payment(id: string, input: Command) {
     }
 
     if (await settle(envelope, hash) === 'failed') {
-      db().prepare('INSERT OR IGNORE INTO failed_deposit VALUES (?, ?)').run(hash, new Date().toISOString())
+      markFailedDeposit(hash)
       return failure
     }
     creditDeposit(intent)
@@ -217,6 +217,10 @@ function releaseFailedWithdrawal(transfer: Transfer) {
   })
 }
 
+function markFailedDeposit(hash: string) {
+  return db().prepare('INSERT OR IGNORE INTO failed_deposit VALUES (?, ?)').run(hash, new Date().toISOString()).changes > 0
+}
+
 export async function reconcileTestnetTransfer(hash: string, lookup = testnetTransferStatus) {
   const deposit = db().prepare(
     'SELECT deposit.* FROM deposit JOIN signed_deposit USING (hash) WHERE hash = ?',
@@ -224,9 +228,16 @@ export async function reconcileTestnetTransfer(hash: string, lookup = testnetTra
   const withdrawal = db().prepare('SELECT * FROM withdrawal WHERE hash = ?').get(hash) as
     (Transfer & { pending: number }) | undefined
   if (!deposit && !withdrawal) throw new Error('No signed or reserved transfer matches this hash.')
-  if (deposit?.credited || withdrawal?.pending === 0) return { message: 'The transfer is already reconciled.' }
+  if (deposit?.credited || withdrawal?.pending === 0 ||
+      db().prepare('SELECT hash FROM failed_deposit WHERE hash = ?').get(hash)) {
+    return { message: 'The transfer is already reconciled.' }
+  }
 
   const receipt = await lookup(hash)
+  if (deposit && receipt.status === 'failed') {
+    const marked = markFailedDeposit(hash)
+    return { message: marked ? 'Failed deposit closed without credit.' : 'The transfer is already reconciled.' }
+  }
   if (withdrawal && receipt.status === 'failed') {
     const released = releaseFailedWithdrawal(withdrawal)
     return { message: released ? 'Failed withdrawal reserve returned to the player.' : 'The transfer is already reconciled.' }

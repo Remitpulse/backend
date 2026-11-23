@@ -60,3 +60,18 @@ test('releases a definitively failed withdrawal reserve exactly once', async () 
   assert.equal(snapshot(id).transfers[0]?.status, 'failed')
   assert.equal(snapshot(id).entries.filter(entry => entry.kind === 'Failed Testnet withdrawal released').length, 1)
 })
+
+test('operator closes a definitively failed deposit without crediting the ledger', async () => {
+  const id = 'failed-deposit'
+  const hash = 'd'.repeat(64)
+  createPlayer(id)
+  db().prepare('INSERT INTO deposit (hash, player, wallet, amount, xdr) VALUES (?, ?, ?, ?, ?)')
+    .run(hash, id, 'wallet', '10000001', 'envelope')
+  db().prepare('INSERT INTO signed_deposit VALUES (?, ?)').run(hash, 'signed')
+  const failed = async () => ({ status: 'failed', ledger: 42 })
+  await Promise.all([reconcileTestnetTransfer(hash, failed), reconcileTestnetTransfer(hash, failed)])
+  const state = snapshot(id)
+  assert.equal(state.testnet, '0')
+  assert.equal(state.deposit, null)
+  assert.equal(state.transfers[0]?.status, 'failed')
+})
