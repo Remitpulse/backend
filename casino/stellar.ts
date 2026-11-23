@@ -147,6 +147,9 @@ export async function payment(id: string, input: Command) {
 
   if (input.action !== 'withdraw' && input.action !== 'withdraw-retry') throw new Error('Choose a wallet action.')
   let pending = db().prepare('SELECT * FROM withdrawal WHERE player = ? AND pending = 1').get(id) as Transfer | undefined
+  if (input.action === 'withdraw-retry' && input.hash !== undefined && input.hash !== pending?.hash) {
+    throw new Error('This withdrawal is no longer pending. Refresh your wallet history.')
+  }
   if (!pending) {
     if (input.action === 'withdraw-retry') throw new Error('There is no pending withdrawal in this session.')
     if (input.eligible !== true) throw new Error('Confirm Testnet participation to continue.')
