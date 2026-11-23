@@ -3,10 +3,10 @@ import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test } from 'node:test'
-import { Keypair } from '@stellar/stellar-sdk'
+import { Account, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
 
 import { createPlayer, db, player, snapshot } from './store.ts'
-import { payment, reconcileTestnetTransfer } from './stellar.ts'
+import { payment, reconcileTestnetTransfer, transferExpiry } from './stellar.ts'
 
 process.env.CASINO_DATA_DIR = mkdtempSync(join(tmpdir(), 'casino-transfers-'))
 
@@ -104,4 +104,18 @@ test('a stale withdrawal or foreign signed deposit cannot be retried', async () 
     if (previousSecret === undefined) delete process.env.CASINO_TESTNET_TREASURY_SECRET
     else process.env.CASINO_TESTNET_TREASURY_SECRET = previousSecret
   }
+})
+
+
+test('reads a signed Testnet envelope deadline as milliseconds', () => {
+  const key = Keypair.random()
+  const tx = new TransactionBuilder(new Account(key.publicKey(), '0'), {
+    fee: '100', networkPassphrase: Networks.TESTNET,
+  })
+    .setTimebounds(0, 1_800_000_000)
+    .addOperation(Operation.bumpSequence({ bumpTo: '5' }))
+    .build()
+  tx.sign(key)
+  assert.equal(transferExpiry(tx.toXdr()), 1_800_000_000_000)
+  assert.equal(transferExpiry('not an envelope'), null)
 })
