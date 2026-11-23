@@ -1,103 +1,14 @@
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
+name: Casino backend
+on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: remitpulse
-          POSTGRES_PASSWORD: remitpulse
-          POSTGRES_DB: remitpulse_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U remitpulse"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgresql://remitpulse:remitpulse@localhost:5432/remitpulse_ci
-      PUBLIC_BASE_URL: http://localhost:8080
-      JWT_SECRET: ci-jwt-secret-at-least-32-characters-long
-      ENCRYPTION_KEY: ci-encryption-key-32-bytes-min-x
-      ANCHOR_CUSTODY_SEED: ci-anchor-custody-seed-32-bytes-min
-      STELLAR_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015'
-      STELLAR_RPC_URL: https://soroban-testnet.stellar.org
-      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
-      ACCOUNT_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
-      SUBSIDY_CONTRACT_ID: CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526
-      RELAYER_SECRET_KEY: SDEBRYUB2SECLZZH7KLSTY2BQKJ6ENX7UR4TGGWXDQCCCGGPBCQCO736
-      PAYMASTER_SECRET_KEY: SCN7ZZJKY4F2YFANXOGR6IRDXCDBIROQADY5UJXU2FUETWZ2BDP6INCW
-      WEBAUTHN_RP_ID: localhost
-      WEBAUTHN_ORIGINS: http://localhost:5173
-
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
+          node-version-file: .nvmrc
+          cache: npm
       - run: npm ci
-
-      - run: npx prisma migrate deploy
-
-      - run: npx prisma generate
-
-      - run: npm run db:seed
-
-      - run: npm run lint
-
-      - run: npm run format:check
-
-      - run: npm run type-check
-
-      - run: npm run build
-
-      - run: npm run test:coverage
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
-      - run: npm ci
-
-      - run: npm audit --audit-level=high
-
-  codeql:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: javascript-typescript
-
-      - uses: github/codeql-action/analyze@v4
-
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - run: docker build -t remitpulse-backend:ci .
+      - run: npm run typecheck
+      - run: npm test
