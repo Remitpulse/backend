@@ -26,6 +26,13 @@ export type CasinoState = {
   round: Round | null
   paused: boolean
   walletEnabled: boolean
+  transfers: {
+    hash: string
+    amount: string
+    direction: 'deposit' | 'withdrawal'
+    status: 'confirmed' | 'pending' | 'failed'
+    created: string
+  }[]
   deposit: { hash: string; amount: string } | null
   withdrawal: { hash: string; amount: string } | null
 }

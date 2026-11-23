@@ -39,6 +39,7 @@ export function db() {
     CREATE TABLE IF NOT EXISTS dice_proof (
       entry TEXT PRIMARY KEY, proof TEXT NOT NULL
     ) STRICT;
+    CREATE INDEX IF NOT EXISTS deposit_player ON deposit(player);
     CREATE TABLE IF NOT EXISTS signed_deposit (
       hash TEXT PRIMARY KEY, xdr TEXT NOT NULL
     ) STRICT;
@@ -46,6 +47,7 @@ export function db() {
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, amount TEXT NOT NULL,
       xdr TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 1
     ) STRICT;
+    CREATE INDEX IF NOT EXISTS withdrawal_player ON withdrawal(player);
     CREATE TABLE IF NOT EXISTS sports_ticket (
       id TEXT PRIMARY KEY, player TEXT NOT NULL, event TEXT NOT NULL, label TEXT NOT NULL,
       selection INTEGER NOT NULL, selection_label TEXT NOT NULL, price INTEGER NOT NULL, stake INTEGER NOT NULL,
@@ -136,6 +138,26 @@ export function snapshot(id: string): CasinoState {
   `
     )
     .get(id) as CasinoState['deposit'] | undefined
+  const transfers = db().prepare(
+    `SELECT hash, amount, direction, status, created FROM (
+      SELECT d.hash, d.amount, 'deposit' AS direction,
+        CASE WHEN d.credited = 1 THEN 'confirmed' ELSE 'pending' END AS status,
+        COALESCE(MAX(e.created), '') AS created
+      FROM deposit d JOIN signed_deposit s USING (hash)
+      LEFT JOIN entry e ON e.player = d.player AND e.detail = d.hash AND e.kind = 'Testnet deposit'
+      WHERE d.player = ? GROUP BY d.hash
+      UNION ALL
+      SELECT w.hash, w.amount, 'withdrawal',
+        CASE WHEN w.pending = 1 THEN 'pending'
+             WHEN MAX(e.kind = 'Failed Testnet withdrawal released') = 1 THEN 'failed'
+             ELSE 'confirmed' END,
+        COALESCE(MAX(e.created), '')
+      FROM withdrawal w
+      LEFT JOIN entry e ON e.player = w.player AND e.detail = w.hash
+        AND e.kind IN ('Withdrawal reserved', 'Testnet withdrawal confirmed', 'Failed Testnet withdrawal released')
+      WHERE w.player = ? GROUP BY w.hash
+    ) ORDER BY (status = 'pending') DESC, created DESC, hash LIMIT 8`,
+  ).all(id, id) as CasinoState['transfers']
   return {
     demo: state.demo.toString(),
     testnet: state.testnet.toString(),
@@ -151,6 +173,7 @@ export function snapshot(id: string): CasinoState {
           nextPayout: minesPayout(BigInt(state.stake), picks.length + 1, mineCount).toString(),
         }
       : null,
+    transfers,
     deposit: deposit || null,
     withdrawal: withdrawal || null,
   }
