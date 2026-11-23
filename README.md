@@ -50,8 +50,13 @@ mkdir -m 700 /secure-backups/restore-drill
 npm run ledger:backup -- /secure-backups/restore-drill/ledger.sqlite /secure-backups/ledger-2026-11-23.sqlite
 ```
 
-Open the restored database separately and compare player balances, pending
-withdrawals, and signed deposits with the backup's recorded cutoff. Keep the
-restore drill disconnected from the treasury signer. Before replacing a live
+From the contracts checkout, compare the snapshot with the restored copy:
+
+```sh
+npm run treasury:audit -- /secure-backups/ledger-2026-11-23.sqlite /secure-backups/restore-drill/ledger.sqlite
+```
+
+The audit checks integrity, individual Testnet balances, and pending transfers.
+Keep the restore drill disconnected from the treasury signer. Before replacing a live
 database, stop the service, preserve its database and WAL files together, and
 reconcile on-chain transfers since the snapshot.
