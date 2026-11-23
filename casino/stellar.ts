@@ -192,7 +192,7 @@ function confirmWithdrawal(transfer: Transfer) {
   })
 }
 
-export async function reconcileTestnetTransfer(hash: string) {
+export async function reconcileTestnetTransfer(hash: string, lookup = testnetTransferStatus) {
   const deposit = db().prepare(
     'SELECT deposit.* FROM deposit JOIN signed_deposit USING (hash) WHERE hash = ?',
   ).get(hash) as Deposit | undefined
@@ -201,7 +201,7 @@ export async function reconcileTestnetTransfer(hash: string) {
   if (!deposit && !withdrawal) throw new Error('No signed or reserved transfer matches this hash.')
   if (deposit?.credited || withdrawal?.pending === 0) return { message: 'The transfer is already reconciled.' }
 
-  const receipt = await testnetTransferStatus(hash)
+  const receipt = await lookup(hash)
   if (receipt.status !== 'confirmed') throw new Error('Reconciliation requires a successful Testnet receipt.')
   const changed = deposit ? creditDeposit(deposit) : confirmWithdrawal(withdrawal!)
   return { message: changed ? 'Confirmed transfer reconciled.' : 'The transfer is already reconciled.' }
