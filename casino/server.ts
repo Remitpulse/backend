@@ -1,3 +1,4 @@
+import { currentFootballFixtures } from './football.ts'
 import { refreshSports, sportsbook } from './sports.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -146,7 +147,7 @@ createServer(async (request, response) => {
     }
     const result =
       input.action === 'sports-market' || input.action === 'sports-place'
-        ? sportsbook(id, input)
+        ? sportsbook(id, input, undefined, await currentFootballFixtures())
         : walletCommands.has(String(input.action))
           ? await payment(id, input)
           : play(id, input)

@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import { atomic, db, player, record } from './store.ts'
 import { parseXlm, STROOPS } from './money.ts'
+import type { FootballFixture } from './football.ts'
 import type { Command } from './game.ts'
 
 const fixtures = [
@@ -37,7 +38,7 @@ type Ticket = {
   price: number
   stake: string
   payout: string
-  state: 'Open' | 'Won' | 'Lost'
+  state: 'Open' | 'Won' | 'Lost' | 'Void'
   settles: number
   score: string | null
 }
@@ -62,7 +63,7 @@ function simulate(fixture: Fixture) {
   return { winner, score: tied ? low + '–' + low : homeWon ? high + '–' + low : low + '–' + high }
 }
 
-function settle(id: string, now: number) {
+function settle(id: string, now: number, football: FootballFixture[] = []) {
   const due = db()
     .prepare(
       `SELECT id, event, selection, price, CAST(stake AS TEXT) AS stake FROM sports_ticket
@@ -73,7 +74,22 @@ function settle(id: string, now: number) {
     let result = db().prepare('SELECT winner, score FROM sports_result WHERE event = ?').get(ticket.event) as
       ReturnType<typeof simulate> | undefined
     if (!result) {
-      result = simulate(fixtures[Number(ticket.event.split('-')[1])])
+      if (ticket.event.startsWith('football-data:')) {
+        const actual = football.find(match => match.id === ticket.event)
+        if (!actual) continue
+        if (actual.status === 'CANCELLED' || actual.status === 'AWARDED') {
+          const stake = BigInt(ticket.stake)
+          db().prepare("UPDATE sports_ticket SET state = 'Void', payout = ?, score = ? WHERE id = ?")
+            .run(stake, actual.status, ticket.id)
+          db().prepare('UPDATE player SET demo = demo + ? WHERE id = ?').run(stake, id)
+          record(id, 'Sports refund', stake, actual.status + ' · Ticket ' + ticket.id.slice(0, 8), 'Sportsbook')
+          continue
+        }
+        if (!actual.result) continue
+        result = actual.result
+      } else {
+        result = simulate(fixtures[Number(ticket.event.split('-')[1])])
+      }
       db().prepare('INSERT INTO sports_result VALUES (?, ?, ?)').run(ticket.event, result.winner, result.score)
     }
     const won = result.winner === ticket.selection
@@ -90,14 +106,20 @@ export function refreshSports(id: string, now = Date.now()) {
   atomic(() => settle(id, now))
 }
 
-export function sportsbook(id: string, input: Command, now = Date.now()) {
+export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null) {
   return atomic(() => {
-    settle(id, now)
+    settle(id, now, football ?? [])
     const window = Math.floor(now / interval)
-    const events = fixtures.map((_, index) => {
+    const simulated = fixtures.map((_, index) => {
       const previous = market(index, window - 1)
       return previous.starts > now ? previous : market(index, window)
     })
+    const real = (football ?? []).filter(match => match.status === 'TIMED' && match.starts > now)
+      .map(({ id, starts, sport, league, home, away }) => ({
+        id, starts, settles: starts, sport, league, home, away,
+        options: [home, 'Draw', away].map((label, selection) => ({ label, selection, price: [235, 320, 310][selection] })),
+      }))
+    const events = [...real, ...simulated.filter(event => !process.env.CASINO_FOOTBALL_DATA_TOKEN || event.sport !== 'Football')]
     let message: string | undefined
     if (input.action === 'sports-place') {
       const state = player(id)!

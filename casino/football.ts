@@ -51,3 +51,30 @@ export async function loadFootballFixtures(token: string, now = Date.now(), fetc
     return fixture ? [fixture] : []
   })
 }
+
+export type FootballFixture = NonNullable<ReturnType<typeof footballFixture>>
+
+const freshness = 60_000
+let cached: { fetchedAt: number; fixtures: FootballFixture[] } | undefined
+let inFlight: Promise<FootballFixture[] | null> | undefined
+let retryAt = 0
+
+export async function currentFootballFixtures(): Promise<FootballFixture[] | null> {
+  const token = process.env.CASINO_FOOTBALL_DATA_TOKEN
+  if (!token) return null
+  const now = Date.now()
+  if (cached && now - cached.fetchedAt < freshness) return cached.fixtures
+  if (inFlight) return inFlight
+  if (now < retryAt) return null
+  inFlight = loadFootballFixtures(token, now)
+    .then(fixtures => {
+      cached = { fetchedAt: now, fixtures }
+      return fixtures
+    })
+    .catch(() => {
+      retryAt = Date.now() + 15_000
+      return null
+    })
+    .finally(() => { inFlight = undefined })
+  return inFlight
+}
