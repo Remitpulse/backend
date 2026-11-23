@@ -36,11 +36,13 @@ test('confirming a reserved withdrawal clears it without another debit', async (
   await assert.rejects(reconcileTestnetTransfer(hash, async () => ({ status: 'not-found', ledger: null })),
     /requires a confirmed Testnet receipt/)
   assert.equal(snapshot(id).withdrawal?.hash, hash)
+  assert.equal(snapshot(id).transfers[0]?.status, 'pending')
 
   const confirmed = async () => ({ status: 'confirmed', ledger: 42 })
   await Promise.all([reconcileTestnetTransfer(hash, confirmed), reconcileTestnetTransfer(hash, confirmed)])
   assert.equal(snapshot(id).withdrawal, null)
   assert.equal(player(id)?.testnet, 7000001n)
+  assert.equal(snapshot(id).transfers[0]?.status, 'confirmed')
   assert.equal(snapshot(id).entries.filter(entry => entry.kind === 'Testnet withdrawal confirmed').length, 1)
 })
 
@@ -55,5 +57,6 @@ test('releases a definitively failed withdrawal reserve exactly once', async () 
   await Promise.all([reconcileTestnetTransfer(hash, failed), reconcileTestnetTransfer(hash, failed)])
   assert.equal(snapshot(id).withdrawal, null)
   assert.equal(player(id)?.testnet, 2000001n)
+  assert.equal(snapshot(id).transfers[0]?.status, 'failed')
   assert.equal(snapshot(id).entries.filter(entry => entry.kind === 'Failed Testnet withdrawal released').length, 1)
 })
