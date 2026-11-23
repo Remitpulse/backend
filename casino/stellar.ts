@@ -49,7 +49,12 @@ export async function payment(id: string, input: Command) {
       throw new Error('Connect a Stellar Testnet wallet.')
     if (state.wallet && state.wallet !== input.wallet) throw new Error('Use the wallet already linked to this session.')
     const value = amount(input.amount)
-    const account = await horizon.loadAccount(input.wallet)
+    const account = await horizon.loadAccount(input.wallet).catch((error: unknown) => {
+      if ((error as { response?: { status?: number } }).response?.status === 404) {
+        throw new Error('This wallet has no Stellar Testnet account. Fund it with Testnet XLM, then retry.')
+      }
+      throw error
+    })
     const tx = new TransactionBuilder(account, options)
       .addOperation(Operation.payment({ destination: key.publicKey(), asset: Asset.native(), amount: xlm(value, 0) }))
       .addMemo(Memo.text(createHash('sha256').update(id).digest('hex').slice(0, 24)))
