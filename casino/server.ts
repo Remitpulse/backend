@@ -81,11 +81,25 @@ async function report() {
        SELECT player, SUM(amount) AS net FROM entry
        WHERE kind IN ('Testnet deposit', 'Withdrawal reserved', 'Failed Testnet withdrawal released')
        GROUP BY player
+     ), reservations AS (
+       SELECT detail, COUNT(*) AS entries, MIN(player) AS player, MIN(amount) AS amount
+       FROM entry WHERE kind = 'Withdrawal reserved' GROUP BY detail
+     ), credits AS (
+       SELECT detail, COUNT(*) AS entries, MIN(player) AS player, MIN(amount) AS amount
+       FROM entry WHERE kind = 'Testnet deposit' GROUP BY detail
      )
      SELECT (SELECT COUNT(*) FROM player p LEFT JOIN movement m ON m.player = p.id
        WHERE p.testnet <> COALESCE(m.net, 0)) AS mismatchedPlayers,
        (SELECT COUNT(*) FROM movement m LEFT JOIN player p ON p.id = m.player
-       WHERE p.id IS NULL) AS missingPlayers`,
+       WHERE p.id IS NULL) AS missingPlayers,
+       (SELECT COUNT(*) FROM withdrawal w LEFT JOIN reservations r ON r.detail = w.hash
+        WHERE w.pending = 1 AND (COALESCE(r.entries, 0) <> 1 OR r.player <> w.player
+          OR CAST(-r.amount AS TEXT) <> w.amount)) AS reservationMismatches,
+       (SELECT COUNT(*) FROM deposit d LEFT JOIN credits c ON c.detail = d.hash
+        WHERE d.credited = 1 AND (COALESCE(c.entries, 0) <> 1 OR c.player <> d.player
+          OR CAST(c.amount AS TEXT) <> d.amount))
+       + (SELECT COUNT(*) FROM credits c LEFT JOIN deposit d ON d.hash = c.detail
+          WHERE d.credited IS NULL OR d.credited <> 1) AS depositCreditMismatches`,
   ).get()
   const reserved = pending.reduce((sum, transfer) => sum + BigInt(String(transfer.amount)), 0n)
   const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
