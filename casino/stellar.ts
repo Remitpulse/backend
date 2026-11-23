@@ -28,6 +28,19 @@ function transaction(xdr: string) {
   return tx
 }
 
+export function transferExpiry(envelope: string) {
+  try {
+    const tx = transaction(envelope)
+    const maxTime = Number("timeBounds" in tx ? tx.timeBounds?.maxTime : undefined)
+    if (Number.isSafeInteger(maxTime) && maxTime > 0 && maxTime <= 8_640_000_000_000) {
+      return maxTime * 1000
+    }
+  } catch {
+    // An unreadable envelope supplies no deadline.
+  }
+  return null
+}
+
 export async function testnetTransferStatus(hash: string) {
   try {
     const receipt = await horizon.transactions().transaction(hash).call()
