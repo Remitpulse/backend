@@ -3,8 +3,10 @@ import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test } from 'node:test'
+import { Keypair } from '@stellar/stellar-sdk'
+
 import { createPlayer, db, player, snapshot } from './store.ts'
-import { reconcileTestnetTransfer } from './stellar.ts'
+import { payment, reconcileTestnetTransfer } from './stellar.ts'
 
 process.env.CASINO_DATA_DIR = mkdtempSync(join(tmpdir(), 'casino-transfers-'))
 
@@ -74,4 +76,32 @@ test('operator closes a definitively failed deposit without crediting the ledger
   assert.equal(state.testnet, '0')
   assert.equal(state.deposit, null)
   assert.equal(state.transfers[0]?.status, 'failed')
+})
+
+
+test('a stale withdrawal or foreign signed deposit cannot be retried', async () => {
+  const previousSecret = process.env.CASINO_TESTNET_TREASURY_SECRET
+  process.env.CASINO_TESTNET_TREASURY_SECRET = Keypair.random().secret()
+  try {
+    const id = 'retry-player'
+    const other = 'retry-other-player'
+    createPlayer(id)
+    createPlayer(other)
+    const current = 'e'.repeat(64)
+    const foreign = 'f'.repeat(64)
+    db().prepare('INSERT INTO withdrawal (hash, player, amount, xdr) VALUES (?, ?, ?, ?)')
+      .run(current, id, '10000001', 'signed')
+    db().prepare('INSERT INTO deposit (hash, player, wallet, amount, xdr) VALUES (?, ?, ?, ?, ?)')
+      .run(foreign, other, 'wallet', '10000001', 'envelope')
+    db().prepare('INSERT INTO signed_deposit VALUES (?, ?)').run(foreign, 'signed')
+
+    await assert.rejects(payment(id, { action: 'withdraw-retry', hash: foreign }), /no longer pending/)
+    await assert.rejects(payment(id, { action: 'deposit-retry', hash: foreign }), /Signed deposit was not found/)
+    assert.equal(snapshot(id).withdrawal?.hash, current)
+    assert.equal(snapshot(other).deposit?.hash, foreign)
+    assert.equal(snapshot(id).testnet, '0')
+  } finally {
+    if (previousSecret === undefined) delete process.env.CASINO_TESTNET_TREASURY_SECRET
+    else process.env.CASINO_TESTNET_TREASURY_SECRET = previousSecret
+  }
 })
