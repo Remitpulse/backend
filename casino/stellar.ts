@@ -60,6 +60,8 @@ export async function testnetTransferStatus(hash: string) {
 async function settle(xdr: string, hash: string) {
   const receipt = await testnetTransferStatus(hash)
   if (receipt.status !== 'not-found') return receipt.status
+  const expiry = transferExpiry(xdr)
+  if (expiry !== null && Date.now() > expiry) return 'expired'
   const confirmed = await horizon.submitTransaction(transaction(xdr))
   if (confirmed.hash !== hash) throw new Error('Unexpected Stellar transaction hash.')
   return 'confirmed'
@@ -150,7 +152,11 @@ export async function payment(id: string, input: Command) {
       })
     }
 
-    if (await settle(envelope, hash) === 'failed') {
+    const outcome = await settle(envelope, hash)
+    if (outcome === 'expired') {
+      throw new Error('This signed deposit expired and Horizon has no receipt. Check with the operator before retrying.')
+    }
+    if (outcome === 'failed') {
       markFailedDeposit(hash)
       return failure
     }
@@ -193,6 +199,9 @@ export async function payment(id: string, input: Command) {
     outcome = await settle(transfer.xdr, transfer.hash)
   } catch {
     throw new Error('Withdrawal is reserved, awaiting Testnet confirmation. Retry confirmation from the wallet panel.')
+  }
+  if (outcome === 'expired') {
+    throw new Error('The signed withdrawal expired and Horizon has no receipt. Your XLM remains reserved for operator review.')
   }
   if (outcome === 'failed') {
     releaseFailedWithdrawal(transfer)
