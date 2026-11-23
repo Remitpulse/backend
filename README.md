@@ -16,8 +16,18 @@ The default bind address is `127.0.0.1:4010`. Copy `.env.example` to `.env` for 
 - Each new demo account receives 1,000 simulated XLM. Wagers, payouts and balances use integer stroops. Server-side random draws determine casino outcomes.
 - Mines stores the full board on the server, locks the selected mine count, and returns the current and next-safe-tile payout estimates. The board is revealed when the round ends.
 - Casino results include the data needed for the interface to show the outcome, such as drawn cards, Keno numbers, or the Plinko path.
-- Fictional football, basketball and tennis fixtures have server-quoted decimal odds. The sportsbook enforces the kickoff cutoff, reserves the stake and settles each eligible ticket once against a shared match result. Due tickets settle when the player refreshes the market or session.
+- The default sportsbook offers fictional football, basketball and tennis fixtures with server-quoted decimal odds. The sportsbook enforces the kickoff cutoff, reserves the stake and settles each eligible ticket once against a shared match result. Simulated fixture tickets settle when the player refreshes the market or session.
 - The shared ledger keeps simulated credits separate from withdrawable Testnet XLM. Public seed verification is outside this milestone.
+
+## Football data
+
+Set `CASINO_FOOTBALL_DATA_TOKEN` in the backend environment to use
+[football-data.org](https://docs.football-data.org/general/v4/match.html)
+for football fixtures and regulation-time results. The sportsbook still uses
+simulated odds and simulated XLM. When the configured feed is unavailable,
+new provider football tickets are paused. Existing tickets wait for a valid
+result. Cancelled or awarded fixtures are voided and refunded. A provider
+score revision is displayed separately from the original settlement.
 
 ## Stellar Testnet and passkeys
 
