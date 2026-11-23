@@ -32,3 +32,26 @@ Place the frontend and backend checkouts side by side, with the frontend directo
 On a remote host, forward HTTPS requests to `127.0.0.1:3000`. Set `CASINO_PUBLIC_ORIGIN` without a trailing slash and `CASINO_SECURE_COOKIE=1` in the backend checkout’s `.env`. Keep Testnet signing secrets outside Git. Back up the database using SQLite-aware tools. Real-money authorization and jurisdiction checks are outside this milestone.
 
 See [Mainnet launch readiness](docs/mainnet-launch-readiness.md) for the current release decision and production verification requirements.
+
+## Ledger recovery drill
+
+Create a snapshot in a restricted directory on the backup volume. Give each
+snapshot a new filename. The command uses SQLite's backup API, checks database
+integrity, and refuses to replace an existing destination.
+
+```sh
+npm run ledger:backup -- /secure-backups/ledger-2026-11-23.sqlite
+```
+
+Restore to an isolated directory and pass the backup as the source.
+
+```sh
+mkdir -m 700 /secure-backups/restore-drill
+npm run ledger:backup -- /secure-backups/restore-drill/ledger.sqlite /secure-backups/ledger-2026-11-23.sqlite
+```
+
+Open the restored database separately and compare player balances, pending
+withdrawals, and signed deposits with the backup's recorded cutoff. Keep the
+restore drill disconnected from the treasury signer. Before replacing a live
+database, stop the service, preserve its database and WAL files together, and
+reconcile on-chain transfers since the snapshot.
