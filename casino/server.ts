@@ -68,6 +68,8 @@ async function report() {
   `
     )
     .all()
+  const reserved = pending.reduce((sum, transfer) => sum + BigInt(String(transfer.amount)), 0n)
+  const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
   let treasury = null
   let treasuryIssue = ''
   try {
@@ -75,7 +77,12 @@ async function report() {
   } catch {
     treasuryIssue = 'Horizon balance unavailable.'
   }
-  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits }
+  const reconciliation = {
+    reserved: reserved.toString(),
+    liabilities: liabilities.toString(),
+    grossDifference: treasury === null ? null : (BigInt(treasury) - liabilities).toString(),
+  }
+  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits, reconciliation }
 }
 
 function sessionCookie(response: ServerResponse, token: string) {
