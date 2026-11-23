@@ -46,10 +46,10 @@ export async function testnetTransferStatus(hash: string) {
 
 async function settle(xdr: string, hash: string) {
   const receipt = await testnetTransferStatus(hash)
-  if (receipt.status === 'confirmed') return
-  if (receipt.status === 'failed') throw new Error('The Testnet transaction failed.')
+  if (receipt.status !== 'not-found') return receipt.status
   const confirmed = await horizon.submitTransaction(transaction(xdr))
   if (confirmed.hash !== hash) throw new Error('Unexpected Stellar transaction hash.')
+  return 'confirmed'
 }
 
 export async function walletBalance(wallet: unknown) {
@@ -135,7 +135,9 @@ export async function payment(id: string, input: Command) {
       })
     }
 
-    await settle(envelope, hash)
+    if (await settle(envelope, hash) === 'failed') {
+      throw new Error('Stellar Testnet recorded this deposit as failed. Start a new deposit.')
+    }
     creditDeposit(intent)
     return { message: 'Testnet deposit confirmed.', hash }
   }
@@ -167,10 +169,15 @@ export async function payment(id: string, input: Command) {
     pending = { hash, player: id, amount: value.toString(), xdr: envelope }
   }
   const transfer = pending
+  let outcome: Awaited<ReturnType<typeof settle>>
   try {
-    await settle(transfer.xdr, transfer.hash)
+    outcome = await settle(transfer.xdr, transfer.hash)
   } catch {
     throw new Error('Withdrawal is reserved, awaiting Testnet confirmation. Retry confirmation from the wallet panel.')
+  }
+  if (outcome === 'failed') {
+    releaseFailedWithdrawal(transfer)
+    return { message: 'Testnet withdrawal failed. The reserved XLM was returned to your balance.', hash: transfer.hash }
   }
   confirmWithdrawal(transfer)
   return { message: 'Testnet withdrawal confirmed.', hash: transfer.hash }
