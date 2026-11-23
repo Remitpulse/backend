@@ -43,16 +43,18 @@ type Ticket = {
   settles: number
   score: string | null
   revisedScore: string | null
+  revisionObserved: number | null
 }
 
 function tickets(id: string) {
   return db()
     .prepare(
-      `SELECT id, event, label, selection, selection_label AS selectionLabel,
+      `SELECT id, sports_ticket.event, label, selection, selection_label AS selectionLabel,
     price, CAST(stake AS TEXT) AS stake, CAST(payout AS TEXT) AS payout,
-    state, settles, score,
-    (SELECT revision.score FROM sports_result_revision revision WHERE revision.event = sports_ticket.event) AS revisedScore
-    FROM sports_ticket WHERE player = ? ORDER BY rowid DESC LIMIT 30`
+    state, settles, sports_ticket.score,
+    revision.score AS revisedScore, revision.observed AS revisionObserved
+    FROM sports_ticket LEFT JOIN sports_result_revision revision ON revision.event = sports_ticket.event
+    WHERE player = ? ORDER BY sports_ticket.rowid DESC LIMIT 30`
     )
     .all(id) as Ticket[]
 }

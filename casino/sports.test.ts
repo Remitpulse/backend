@@ -104,6 +104,7 @@ test('provider tickets await regulation results and are settled or refunded only
     .find(ticket => ticket.event === timed.id)
   assert.equal(revised?.score, '2–1')
   assert.equal(revised?.revisedScore, '2–2')
+  assert.equal(revised?.revisionObserved, now + 80_000)
   assert.equal(player(id)!.demo, balance)
   assert.equal(refresh(outcomes).find(ticket => ticket.event === timed.id)?.revisedScore, null)
   assert.equal(player(id)!.testnet, 0n)
