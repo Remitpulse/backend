@@ -36,6 +36,7 @@ function adminAllowed(header: string | undefined) {
 }
 
 async function report() {
+  const ledgerObservedAt = new Date().toISOString()
   const database = db()
   const totals = database
     .prepare(
@@ -105,8 +106,10 @@ async function report() {
   const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
   let treasury = null
   let treasuryIssue = ''
+  let treasuryObservedAt: string | null = null
   try {
     treasury = await treasuryBalance()
+    if (treasury !== null) treasuryObservedAt = new Date().toISOString()
   } catch {
     treasuryIssue = 'Horizon balance unavailable.'
   }
@@ -116,7 +119,7 @@ async function report() {
     liabilities: liabilities.toString(),
     grossDifference: treasury === null ? null : (BigInt(treasury) - liabilities).toString(),
   }
-  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits, reconciliation, footballRevisions }
+  return { treasury, treasuryIssue, ledgerObservedAt, treasuryObservedAt, totals, activity, pending, pendingDeposits, reconciliation, footballRevisions }
 }
 
 function sessionCookie(response: ServerResponse, token: string) {
