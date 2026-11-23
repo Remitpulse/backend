@@ -149,7 +149,8 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
       if (state.paused) throw new Error('Demo wagering is paused for this session.')
       const event = events.find(item => item.id === input.event)
       const option = event?.options.find(item => item.selection === input.selection)
-      if (!event || !option || now >= event.starts || option.price !== input.price) {
+      if (!event || !option || now >= event.starts || option.price !== input.price ||
+          (event.id.startsWith('football-data:') && event.starts !== input.starts)) {
         throw new Error('This market or price has expired. Refresh the fixtures.')
       }
       if (db().prepare('SELECT id FROM sports_ticket WHERE player = ? AND event = ?').get(id, event.id)) {

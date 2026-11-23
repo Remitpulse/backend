@@ -84,7 +84,7 @@ test('provider tickets await regulation results and are settled or refunded only
   const second = { ...timed, id: 'football-data:456' }
   for (const event of [timed, second]) {
     sportsbook(id, {
-      action: 'sports-place', event: event.id, selection: 0, price: 235, amount: '1.0000001',
+      action: 'sports-place', event: event.id, starts: event.starts, selection: 0, price: 235, amount: '1.0000001',
     }, now, [event])
   }
   const refresh = (matches: Parameters<typeof sportsbook>[3]) =>
@@ -103,4 +103,19 @@ test('provider tickets await regulation results and are settled or refunded only
   refresh(outcomes)
   assert.equal(player(id)!.demo, balance)
   assert.equal(player(id)!.testnet, 0n)
+})
+
+
+test('provider kickoff changes invalidate the selected quote before reserving a stake', () => {
+  const id = 'rescheduled-quote'
+  const now = 18_000_000
+  createPlayer(id)
+  const match = {
+    id: 'football-data:987', starts: now + 60_000, sport: 'Football' as const,
+    league: 'Example League', home: 'Home', away: 'Away', status: 'TIMED', result: null,
+  }
+  const bet = { action: 'sports-place', event: match.id, starts: match.starts, selection: 0, price: 235, amount: '1' }
+  assert.throws(() => sportsbook(id, bet, now, [{ ...match, starts: match.starts + 60_000 }]), /expired/)
+  assert.equal(player(id)?.demo, 10_000_000_000n)
+  assert.equal(sportsbook(id, bet, now, [match]).sports.tickets.length, 1)
 })
