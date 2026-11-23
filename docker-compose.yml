@@ -1,8 +1,6 @@
 services:
   casino:
     build: .
-    ports:
-      - "127.0.0.1:4010:4010"
     environment:
       CASINO_PUBLIC_ORIGIN: "${CASINO_PUBLIC_ORIGIN:-http://localhost:3000}"
       CASINO_SECURE_COOKIE: "${CASINO_SECURE_COOKIE:-0}"
@@ -10,5 +8,27 @@ services:
       CASINO_ADMIN_TOKEN: "${CASINO_ADMIN_TOKEN:-}"
     volumes:
       - casino-ledger:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4010/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  frontend:
+    build: ../frontend
+    environment:
+      CASINO_BACKEND_URL: http://casino:4010
+      CASINO_PUBLIC_ORIGIN: "${CASINO_PUBLIC_ORIGIN:-http://localhost:3000}"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      casino:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 volumes:
   casino-ledger:

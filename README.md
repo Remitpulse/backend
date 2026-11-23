@@ -11,3 +11,9 @@ Use Node.js 24, run `npm ci`, then `npm start`. The service listens on `127.0.0.
 `npm test` exercises exact stroop arithmetic, server game settlement, and Mines round state. The self-attestation in Testnet is a demo control. Real-money authorization, identity and jurisdiction checks, independent fairness review, and production payment operations are outside this milestone.
 
 The sportsbook simulates football, basketball and tennis on a rolling schedule. It validates the quoted odds and market cutoff, reserves demo stroops at placement, and settles each ticket against one persisted result per match. Settlement runs when the player refreshes the market or session. Fixtures and odds are fictional. The native Stellar Testnet wallet uses a separate balance.
+
+## Deploy both services
+
+Place the frontend and backend checkouts side by side, with the frontend directory named `frontend`. From the backend checkout, run `docker compose up --build --wait`. The frontend binds to loopback on port 3000. The backend communicates over the Compose network and stores the SQLite ledger in the `casino-ledger` volume.
+
+For remote access, point the host's HTTPS reverse proxy to `127.0.0.1:3000`. Set `CASINO_PUBLIC_ORIGIN` to the exact public HTTPS origin without a trailing slash and `CASINO_SECURE_COOKIE=1` in the backend checkout's `.env`. A configured Testnet treasury and operator token are optional for simulated gameplay. Keep those values out of source control.
