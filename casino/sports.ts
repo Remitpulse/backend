@@ -119,7 +119,10 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
         id, starts, settles: starts, sport, league, home, away,
         options: [home, 'Draw', away].map((label, selection) => ({ label, selection, price: [235, 320, 310][selection] })),
       }))
-    const events = [...real, ...simulated.filter(event => !process.env.CASINO_FOOTBALL_DATA_TOKEN || event.sport !== 'Football')]
+    const footballStatus = !process.env.CASINO_FOOTBALL_DATA_TOKEN && football === null
+      ? 'simulated'
+      : football === null ? 'unavailable' : 'current'
+    const events = [...real, ...simulated.filter(event => footballStatus === 'simulated' || event.sport !== 'Football')]
     let message: string | undefined
     if (input.action === 'sports-place') {
       const state = player(id)!
@@ -156,6 +159,6 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
       record(id, 'Sports wager', -stake, event.home + ' vs ' + event.away + ' · ' + option.label, 'Sportsbook')
       message = 'Demo ticket accepted.'
     }
-    return { sports: { events, tickets: tickets(id), time: now }, message }
+    return { sports: { events, tickets: tickets(id), time: now, footballStatus }, message }
   })
 }
