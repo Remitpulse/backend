@@ -76,6 +76,17 @@ async function report() {
      FROM sports_result_revision r JOIN sports_result original ON original.event = r.event
      ORDER BY r.observed DESC, r.event LIMIT 50`,
   ).all()
+  const balanceAudit = database.prepare(
+    `WITH movement AS (
+       SELECT player, SUM(amount) AS net FROM entry
+       WHERE kind IN ('Testnet deposit', 'Withdrawal reserved', 'Failed Testnet withdrawal released')
+       GROUP BY player
+     )
+     SELECT (SELECT COUNT(*) FROM player p LEFT JOIN movement m ON m.player = p.id
+       WHERE p.testnet <> COALESCE(m.net, 0)) AS mismatchedPlayers,
+       (SELECT COUNT(*) FROM movement m LEFT JOIN player p ON p.id = m.player
+       WHERE p.id IS NULL) AS missingPlayers`,
+  ).get()
   const reserved = pending.reduce((sum, transfer) => sum + BigInt(String(transfer.amount)), 0n)
   const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
   let treasury = null
@@ -87,6 +98,7 @@ async function report() {
   }
   const reconciliation = {
     reserved: reserved.toString(),
+    balanceAudit,
     liabilities: liabilities.toString(),
     grossDifference: treasury === null ? null : (BigInt(treasury) - liabilities).toString(),
   }
