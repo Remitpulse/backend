@@ -31,7 +31,10 @@ function transaction(xdr: string) {
 export async function testnetTransferStatus(hash: string) {
   try {
     const receipt = await horizon.transactions().transaction(hash).call()
-    if (typeof receipt.successful !== 'boolean') throw new Error('Horizon returned an incomplete transfer receipt.')
+    if (receipt.hash !== hash || typeof receipt.successful !== 'boolean' ||
+        !Number.isSafeInteger(receipt.ledger_attr) || receipt.ledger_attr <= 0) {
+      throw new Error('Horizon returned an incomplete or mismatched transfer receipt.')
+    }
     return { status: receipt.successful ? 'confirmed' : 'failed', ledger: receipt.ledger_attr }
   } catch (error) {
     if ((error as { response?: { status?: number } }).response?.status === 404) {
