@@ -163,6 +163,7 @@ export function snapshot(id: string): CasinoState {
     testnet: state.testnet.toString(),
     entries: entries.map(({ proof, ...entry }) => proof ? { ...entry, proof: JSON.parse(proof) as Entry['proof'] } : entry),
     paused: state.paused === 1n,
+    linkedWallet: state.wallet,
     walletEnabled: Boolean(process.env.CASINO_TESTNET_TREASURY_SECRET),
     round: state.stake
       ? {

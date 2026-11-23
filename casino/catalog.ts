@@ -26,6 +26,7 @@ export type CasinoState = {
   round: Round | null
   paused: boolean
   walletEnabled: boolean
+  linkedWallet: string | null
   transfers: {
     hash: string
     amount: string
