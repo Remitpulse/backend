@@ -4,7 +4,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createPlayer, db, player, snapshot } from './store.ts'
 import { play } from './game.ts'
 import { hasPasskey, passkey } from './passkeys.ts'
-import { payment, treasuryBalance } from './stellar.ts'
+import { payment, treasuryBalance, walletBalance } from './stellar.ts'
 
 const port = Number(process.env.PORT || '4010')
 const host = process.env.CASINO_HOST || '127.0.0.1'
@@ -133,6 +133,9 @@ createServer(async (request, response) => {
         issueSession(response, login)
       }
       return send(response, 200, { state: state(login || id), ...result })
+    }
+    if (input.action === 'wallet-balance') {
+      return send(response, 200, { state: state(id), ...(await walletBalance(input.wallet)) })
     }
     const result =
       input.action === 'sports-market' || input.action === 'sports-place'

@@ -40,6 +40,22 @@ async function settle(xdr: string, hash: string) {
   if (confirmed.hash !== hash) throw new Error('Unexpected Stellar transaction hash.')
 }
 
+export async function walletBalance(wallet: unknown) {
+  if (typeof wallet !== 'string' || !StrKey.isValidEd25519PublicKey(wallet)) {
+    throw new Error('Connect a Stellar Testnet wallet.')
+  }
+  try {
+    const account = await horizon.loadAccount(wallet)
+    const native = account.balances.find(balance => balance.asset_type === 'native')
+    return { walletBalance: { funded: true, stroops: native ? parseXlm(native.balance).toString() : '0' } }
+  } catch (error) {
+    if ((error as { response?: { status?: number } }).response?.status === 404) {
+      return { walletBalance: { funded: false, stroops: '0' } }
+    }
+    throw error
+  }
+}
+
 export async function payment(id: string, input: Command) {
   const key = treasury()
   const state = player(id)!
