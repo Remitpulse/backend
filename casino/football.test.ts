@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { footballFixture, loadFootballFixtures } from './football.ts'
+import { footballFixture, loadFootballFixtures, loadFootballResults } from './football.ts'
 
 const match = {
   id: 123,
@@ -37,4 +37,18 @@ test('football requests use UTC date filters and authenticate only with the prov
     return Response.json({ matches: [match, { id: 124 }, null] })
   })
   assert.deepEqual(fixtures.map(fixture => fixture.id), ['football-data:123'])
+})
+
+test('supplemental result lookup batches only distinct provider IDs', async () => {
+  const inputs = ['football-data:123', 'football-data:123', 'fake-1', 'football-data:456']
+  const fixtures = await loadFootballResults('fixture-token', inputs, async input => {
+    const url = new URL(String(input))
+    assert.equal(url.searchParams.get('ids'), '123,456')
+    assert.equal(url.searchParams.has('dateFrom'), false)
+    return Response.json({ matches: [match] })
+  })
+  assert.deepEqual(fixtures.map(fixture => fixture.id), ['football-data:123'])
+  assert.deepEqual(await loadFootballResults('fixture-token', ['fake-1'], async () => {
+    throw new Error('No provider request was expected.')
+  }), [])
 })
