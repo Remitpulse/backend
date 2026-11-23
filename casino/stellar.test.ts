@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { Account, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
 
 import { createPlayer, db, player, snapshot } from './store.ts'
-import { payment, reconcileTestnetTransfer, transferExpiry } from './stellar.ts'
+import { payment, reconcileTestnetTransfer, settleTestnetEnvelope, transferExpiry } from './stellar.ts'
 
 process.env.CASINO_DATA_DIR = mkdtempSync(join(tmpdir(), 'casino-transfers-'))
 
@@ -118,4 +118,16 @@ test('reads a signed Testnet envelope deadline as milliseconds', () => {
   tx.sign(key)
   assert.equal(transferExpiry(tx.toXdr()), 1_800_000_000_000)
   assert.equal(transferExpiry('not an envelope'), null)
+})
+
+
+test('an expired envelope is only terminal when Horizon has a recorded outcome', async () => {
+  const signer = Keypair.random()
+  const tx = new TransactionBuilder(new Account(signer.publicKey(), '0'), {
+    fee: '100', networkPassphrase: Networks.TESTNET,
+  }).setTimebounds(0, 1).addOperation(Operation.bumpSequence({ bumpTo: '5' })).build()
+  tx.sign(signer)
+  const hash = Buffer.from(tx.hash()).toString('hex')
+  assert.equal(await settleTestnetEnvelope(tx.toXdr(), hash, async () => ({ status: 'not-found', ledger: null })), 'expired')
+  assert.equal(await settleTestnetEnvelope(tx.toXdr(), hash, async () => ({ status: 'confirmed', ledger: 42 })), 'confirmed')
 })

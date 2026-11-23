@@ -57,8 +57,8 @@ export async function testnetTransferStatus(hash: string) {
   }
 }
 
-async function settle(xdr: string, hash: string) {
-  const receipt = await testnetTransferStatus(hash)
+export async function settleTestnetEnvelope(xdr: string, hash: string, lookup = testnetTransferStatus) {
+  const receipt = await lookup(hash)
   if (receipt.status !== 'not-found') return receipt.status
   const expiry = transferExpiry(xdr)
   if (expiry !== null && Date.now() > expiry) return 'expired'
@@ -152,7 +152,7 @@ export async function payment(id: string, input: Command) {
       })
     }
 
-    const outcome = await settle(envelope, hash)
+    const outcome = await settleTestnetEnvelope(envelope, hash)
     if (outcome === 'expired') {
       throw new Error('This signed deposit expired and Horizon has no receipt. Check with the operator before retrying.')
     }
@@ -194,9 +194,9 @@ export async function payment(id: string, input: Command) {
     pending = { hash, player: id, amount: value.toString(), xdr: envelope }
   }
   const transfer = pending
-  let outcome: Awaited<ReturnType<typeof settle>>
+  let outcome: Awaited<ReturnType<typeof settleTestnetEnvelope>>
   try {
-    outcome = await settle(transfer.xdr, transfer.hash)
+    outcome = await settleTestnetEnvelope(transfer.xdr, transfer.hash)
   } catch {
     throw new Error('Withdrawal is reserved, awaiting Testnet confirmation. Retry confirmation from the wallet panel.')
   }
