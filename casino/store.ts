@@ -43,6 +43,9 @@ export function db() {
     CREATE TABLE IF NOT EXISTS signed_deposit (
       hash TEXT PRIMARY KEY, xdr TEXT NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS failed_deposit (
+      hash TEXT PRIMARY KEY, created TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS withdrawal (
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, amount TEXT NOT NULL,
       xdr TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 1
@@ -134,16 +137,17 @@ export function snapshot(id: string): CasinoState {
     .prepare(
       `
     SELECT hash, amount FROM deposit JOIN signed_deposit USING (hash)
-    WHERE player = ? AND credited = 0 ORDER BY deposit.rowid DESC LIMIT 1
+    WHERE player = ? AND credited = 0 AND hash NOT IN (SELECT hash FROM failed_deposit) ORDER BY deposit.rowid DESC LIMIT 1
   `
     )
     .get(id) as CasinoState['deposit'] | undefined
   const transfers = db().prepare(
     `SELECT hash, amount, direction, status, created FROM (
       SELECT d.hash, d.amount, 'deposit' AS direction,
-        CASE WHEN d.credited = 1 THEN 'confirmed' ELSE 'pending' END AS status,
-        COALESCE(MAX(e.created), '') AS created
+        CASE WHEN d.credited = 1 THEN 'confirmed' WHEN f.hash IS NOT NULL THEN 'failed' ELSE 'pending' END AS status,
+        COALESCE(MAX(e.created), f.created, '') AS created
       FROM deposit d JOIN signed_deposit s USING (hash)
+      LEFT JOIN failed_deposit f ON f.hash = d.hash
       LEFT JOIN entry e ON e.player = d.player AND e.detail = d.hash AND e.kind = 'Testnet deposit'
       WHERE d.player = ? GROUP BY d.hash
       UNION ALL

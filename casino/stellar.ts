@@ -119,6 +119,8 @@ export async function payment(id: string, input: Command) {
     const intent = db().prepare('SELECT * FROM deposit WHERE hash = ? AND player = ?').get(hash, id) as Deposit | undefined
     if (!intent) throw new Error('Payment does not match this session’s deposit request.')
     if (intent.credited) return { message: 'Deposit already credited.', hash }
+    const failure = { message: 'Stellar Testnet recorded this deposit as failed. Start a new deposit.', hash }
+    if (db().prepare('SELECT hash FROM failed_deposit WHERE hash = ?').get(hash)) return failure
 
     if (input.action === 'deposit-submit') {
       const signed = transaction(envelope)
@@ -136,7 +138,8 @@ export async function payment(id: string, input: Command) {
     }
 
     if (await settle(envelope, hash) === 'failed') {
-      throw new Error('Stellar Testnet recorded this deposit as failed. Start a new deposit.')
+      db().prepare('INSERT OR IGNORE INTO failed_deposit VALUES (?, ?)').run(hash, new Date().toISOString())
+      return failure
     }
     creditDeposit(intent)
     return { message: 'Testnet deposit confirmed.', hash }

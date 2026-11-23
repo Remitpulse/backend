@@ -65,7 +65,7 @@ async function report() {
     .prepare(
       `
     SELECT deposit.hash, deposit.amount, deposit.wallet FROM deposit JOIN signed_deposit USING (hash)
-    WHERE deposit.credited = 0 ORDER BY deposit.rowid ASC LIMIT 100
+    WHERE deposit.credited = 0 AND deposit.hash NOT IN (SELECT hash FROM failed_deposit) ORDER BY deposit.rowid ASC LIMIT 100
   `
     )
     .all()
