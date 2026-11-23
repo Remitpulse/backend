@@ -1,4 +1,4 @@
-import { committedDiceRoll, createDiceCommitment } from './fairness.ts'
+import { committedDiceRoll, createDiceCommitment, type DiceProof } from './fairness.ts'
 import { randomInt } from 'node:crypto'
 import { atomic, db, minesPayout, player, record } from './store.ts'
 import { tableGame } from './table-games.ts'
@@ -65,7 +65,7 @@ export function play(id: string, input: Command) {
     let result: string
     let payout = 0n
     let path: number[] | undefined
-    let proof: { version: 1; commitment: string; serverSeed: string; clientSeed: string; roll: number; target: number; stake: string; payout: string } | undefined
+    let proof: DiceProof | undefined
     let detail: { board?: number[]; hand?: ReturnType<typeof tableGame>['hand'] } = {}
 
     switch (input.game) {

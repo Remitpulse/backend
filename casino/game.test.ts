@@ -92,6 +92,7 @@ test('Dice commits before play, keeps its seed private and consumes the commitme
   assert.ok('proof' in result && result.proof)
   assert.equal(result.proof.commitment, commit.commitment)
   assert.equal(result.proof.stake, '10000001')
+  assert.deepEqual(snapshot('committed-dice').entries[0].proof, result.proof)
   assert.equal(result.proof.payout, result.payout)
   assert.equal(result.proof.roll < 5000, BigInt(result.payout!) > 0n)
   assert.throws(() => play('committed-dice', wager), /Request a Dice commitment/)

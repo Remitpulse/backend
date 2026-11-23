@@ -119,9 +119,11 @@ export function snapshot(id: string): CasinoState {
   const state = player(id)!
   const entries = db()
     .prepare(
-      'SELECT id, kind, game, CAST(amount AS TEXT) AS amount, detail, created FROM entry WHERE player = ? ORDER BY rowid DESC LIMIT 40'
+      `SELECT entry.id, kind, game, CAST(amount AS TEXT) AS amount, detail, created, dice_proof.proof
+       FROM entry LEFT JOIN dice_proof ON dice_proof.entry = entry.id
+       WHERE entry.player = ? ORDER BY entry.rowid DESC LIMIT 40`
     )
-    .all(id) as Entry[]
+    .all(id) as (Omit<Entry, 'proof'> & { proof: string | null })[]
   const mineCount = state.mines ? (JSON.parse(state.mines) as number[]).length : 3
   const picks: number[] = state.picks ? JSON.parse(state.picks) : []
   const withdrawal = db().prepare('SELECT hash, amount FROM withdrawal WHERE player = ? AND pending = 1').get(id) as
@@ -137,7 +139,7 @@ export function snapshot(id: string): CasinoState {
   return {
     demo: state.demo.toString(),
     testnet: state.testnet.toString(),
-    entries,
+    entries: entries.map(({ proof, ...entry }) => proof ? { ...entry, proof: JSON.parse(proof) as Entry['proof'] } : entry),
     paused: state.paused === 1n,
     walletEnabled: Boolean(process.env.CASINO_TESTNET_TREASURY_SECRET),
     round: state.stake

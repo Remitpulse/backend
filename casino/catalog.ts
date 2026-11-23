@@ -1,3 +1,5 @@
+import type { DiceProof } from './fairness.ts'
+
 export const games = [
   { id: 'dice', title: 'Dice', subtitle: 'Roll under your target', color: '#a483ff', mark: '⚄' },
   { id: 'mines', title: 'Mines', subtitle: 'Uncover gems and cash out', color: '#51e5b9', mark: '◆' },
@@ -14,6 +16,7 @@ export type Entry = {
   amount: string
   created: string
   detail: string
+  proof?: DiceProof
 }
 export type Round = { stake: string; picks: number[]; mineCount: number; payout: string; nextPayout: string }
 export type CasinoState = {

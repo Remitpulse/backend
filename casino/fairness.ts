@@ -27,3 +27,15 @@ export function committedDiceRoll(serverSeed: string, clientSeed: string): numbe
     if (draw < accepted) return draw % 10_000
   }
 }
+
+
+export type DiceProof = {
+  version: 1
+  commitment: string
+  serverSeed: string
+  clientSeed: string
+  roll: number
+  target: number
+  stake: string
+  payout: string
+}
