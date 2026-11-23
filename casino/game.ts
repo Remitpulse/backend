@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto'
 import { atomic, db, minesPayout, player, record } from './store.ts'
+import { tableGame } from './table-games.ts'
 import { parseXlm, STROOPS } from './money.ts'
 
 export type Command = Record<string, unknown>
@@ -57,6 +58,7 @@ export function play(id: string, input: Command) {
     let result: string
     let payout = 0n
     let path: number[] | undefined
+    let detail: { board?: number[]; hand?: ReturnType<typeof tableGame>['hand'] } = {}
 
     switch (input.game) {
       case 'dice': {
@@ -101,13 +103,18 @@ export function play(id: string, input: Command) {
         record(id, 'Wager', -stake, '3 mines', 'Mines')
         return { message: 'Choose a tile.' }
       }
-      default:
-        throw new Error('Choose a game.')
+      default: {
+        const settled = tableGame(input, stake)
+        title = settled.title
+        result = settled.result
+        payout = settled.payout
+        detail = { board: settled.board, hand: settled.hand }
+      }
     }
 
     db().prepare('UPDATE player SET demo = demo - ? + ? WHERE id = ?').run(stake, payout, id)
     record(id, 'Wager', -stake, 'Demo wager', title)
     record(id, payout > 0n ? 'Payout' : 'Result', payout, result, title)
-    return { message: result, payout: payout.toString(), ...(path && { path }) }
+    return { message: result, payout: payout.toString(), ...(path && { path }), ...detail }
   })
 }
