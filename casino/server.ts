@@ -60,6 +60,14 @@ async function report() {
   `
     )
     .all()
+  const pendingDeposits = database
+    .prepare(
+      `
+    SELECT deposit.hash, deposit.amount FROM deposit JOIN signed_deposit USING (hash)
+    WHERE deposit.credited = 0 ORDER BY deposit.rowid ASC LIMIT 100
+  `
+    )
+    .all()
   let treasury = null
   let treasuryIssue = ''
   try {
@@ -67,7 +75,7 @@ async function report() {
   } catch {
     treasuryIssue = 'Horizon balance unavailable.'
   }
-  return { treasury, treasuryIssue, totals, activity, pending }
+  return { treasury, treasuryIssue, totals, activity, pending, pendingDeposits }
 }
 
 function sessionCookie(response: ServerResponse, token: string) {
