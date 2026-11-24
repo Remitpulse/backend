@@ -1,3 +1,4 @@
+import { committedDiceRoll, createDiceCommitment, type DiceProof } from './fairness.ts'
 import { randomInt } from 'node:crypto'
 import { atomic, db, minesPayout, player, record } from './store.ts'
 import { tableGame } from './table-games.ts'
@@ -15,6 +16,12 @@ function integer(input: unknown, min: number, max: number): number {
 export function play(id: string, input: Command) {
   return atomic(() => {
     const state = player(id)!
+    if (input.action === 'dice-commit') {
+      const { commitment, serverSeed } = createDiceCommitment()
+      db().prepare('INSERT OR IGNORE INTO dice_commitment VALUES (?, ?, ?)').run(id, commitment, serverSeed)
+      const pending = db().prepare('SELECT commitment FROM dice_commitment WHERE player = ?').get(id)!
+      return { commitment: String(pending.commitment) }
+    }
     if (input.action === 'pause') {
       db().prepare('UPDATE player SET paused = 1 WHERE id = ?').run(id)
       return { message: 'Demo wagering paused for this session.' }
@@ -58,13 +65,27 @@ export function play(id: string, input: Command) {
     let result: string
     let payout = 0n
     let path: number[] | undefined
+    let proof: DiceProof | undefined
     let detail: { board?: number[]; hand?: ReturnType<typeof tableGame>['hand'] } = {}
 
     switch (input.game) {
       case 'dice': {
         title = 'Dice'
         const target = integer(input.setting, 2, 98)
-        const roll = randomInt(10000)
+        let roll: number
+        if (input.commitment === undefined && input.clientSeed === undefined) {
+          roll = randomInt(10000)
+        } else {
+          const pending = db().prepare('SELECT commitment, seed FROM dice_commitment WHERE player = ?').get(id)
+          if (!pending || input.commitment !== pending.commitment || typeof input.clientSeed !== 'string') {
+            throw new Error('Request a Dice commitment before rolling.')
+          }
+          const serverSeed = String(pending.seed)
+          roll = committedDiceRoll(serverSeed, input.clientSeed)
+          db().prepare('DELETE FROM dice_commitment WHERE player = ?').run(id)
+          const returnAmount = roll < target * 100 ? (stake * 99n) / BigInt(target) : 0n
+          proof = { version: 1, commitment: String(pending.commitment), serverSeed, clientSeed: input.clientSeed, roll, target, stake: stake.toString(), payout: returnAmount.toString() }
+        }
         result = (roll / 100).toFixed(2)
         if (roll < target * 100) payout = (stake * 99n) / BigInt(target)
         break
@@ -115,7 +136,8 @@ export function play(id: string, input: Command) {
 
     db().prepare('UPDATE player SET demo = demo - ? + ? WHERE id = ?').run(stake, payout, id)
     record(id, 'Wager', -stake, 'Demo wager', title)
-    record(id, payout > 0n ? 'Payout' : 'Result', payout, result, title)
-    return { message: result, payout: payout.toString(), ...(path && { path }), ...detail }
+    const entry = record(id, payout > 0n ? 'Payout' : 'Result', payout, result, title)
+    if (proof) db().prepare('INSERT INTO dice_proof VALUES (?, ?)').run(entry, JSON.stringify(proof))
+    return { message: result, payout: payout.toString(), ...(proof && { proof }), ...(path && { path }), ...detail }
   })
 }

@@ -77,3 +77,23 @@ test('table and draw games emit valid outcomes and settle only the demo balance'
   assert.throws(() => play(id, { action: 'play', game: 'keno', amount: '1', setting: [1, 1, 2, 3, 4] }))
   assert.equal(player(id)!.demo, balance)
 })
+
+test('Dice commits before play, keeps its seed private and consumes the commitment once', () => {
+  createPlayer('committed-dice')
+  const commit = play('committed-dice', { action: 'dice-commit' })
+  assert.deepEqual(Object.keys(commit), ['commitment'])
+  assert.deepEqual(play('committed-dice', { action: 'dice-commit' }), commit)
+  const wager = {
+    action: 'play', game: 'dice', setting: 50, amount: '1.0000001',
+    commitment: commit.commitment, clientSeed: '42'.repeat(32),
+  }
+  assert.throws(() => play('committed-dice', { ...wager, clientSeed: 'invalid' }))
+  const result = play('committed-dice', wager)
+  assert.ok('proof' in result && result.proof)
+  assert.equal(result.proof.commitment, commit.commitment)
+  assert.equal(result.proof.stake, '10000001')
+  assert.deepEqual(snapshot('committed-dice').entries[0].proof, result.proof)
+  assert.equal(result.proof.payout, result.payout)
+  assert.equal(result.proof.roll < 5000, BigInt(result.payout!) > 0n)
+  assert.throws(() => play('committed-dice', wager), /Request a Dice commitment/)
+})

@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import { atomic, db, player, record } from './store.ts'
 import { parseXlm, STROOPS } from './money.ts'
+import { currentFootballFixtures, currentFootballResults, type FootballFixture } from './football.ts'
 import type { Command } from './game.ts'
 
 const fixtures = [
@@ -13,6 +14,7 @@ const fixtures = [
 ] as const
 const interval = 180_000
 const duration = 45_000
+const revisionWindow = 14 * 86_400_000
 type Fixture = (typeof fixtures)[number]
 
 function market(index: number, window: number) {
@@ -37,17 +39,22 @@ type Ticket = {
   price: number
   stake: string
   payout: string
-  state: 'Open' | 'Won' | 'Lost'
+  state: 'Open' | 'Won' | 'Lost' | 'Void'
   settles: number
   score: string | null
+  revisedScore: string | null
+  revisionObserved: number | null
 }
 
 function tickets(id: string) {
   return db()
     .prepare(
-      `SELECT id, event, label, selection, selection_label AS selectionLabel,
+      `SELECT id, sports_ticket.event, label, selection, selection_label AS selectionLabel,
     price, CAST(stake AS TEXT) AS stake, CAST(payout AS TEXT) AS payout,
-    state, settles, score FROM sports_ticket WHERE player = ? ORDER BY rowid DESC LIMIT 30`
+    state, settles, sports_ticket.score,
+    revision.score AS revisedScore, revision.observed AS revisionObserved
+    FROM sports_ticket LEFT JOIN sports_result_revision revision ON revision.event = sports_ticket.event
+    WHERE player = ? ORDER BY sports_ticket.rowid DESC LIMIT 30`
     )
     .all(id) as Ticket[]
 }
@@ -62,7 +69,7 @@ function simulate(fixture: Fixture) {
   return { winner, score: tied ? low + '–' + low : homeWon ? high + '–' + low : low + '–' + high }
 }
 
-function settle(id: string, now: number) {
+function settle(id: string, now: number, football: FootballFixture[] = []) {
   const due = db()
     .prepare(
       `SELECT id, event, selection, price, CAST(stake AS TEXT) AS stake FROM sports_ticket
@@ -73,7 +80,22 @@ function settle(id: string, now: number) {
     let result = db().prepare('SELECT winner, score FROM sports_result WHERE event = ?').get(ticket.event) as
       ReturnType<typeof simulate> | undefined
     if (!result) {
-      result = simulate(fixtures[Number(ticket.event.split('-')[1])])
+      if (ticket.event.startsWith('football-data:')) {
+        const actual = football.find(match => match.id === ticket.event)
+        if (!actual) continue
+        if (actual.status === 'CANCELLED' || actual.status === 'AWARDED') {
+          const stake = BigInt(ticket.stake)
+          db().prepare("UPDATE sports_ticket SET state = 'Void', payout = ?, score = ? WHERE id = ?")
+            .run(stake, actual.status, ticket.id)
+          db().prepare('UPDATE player SET demo = demo + ? WHERE id = ?').run(stake, id)
+          record(id, 'Sports refund', stake, actual.status + ' · Ticket ' + ticket.id.slice(0, 8), 'Sportsbook')
+          continue
+        }
+        if (!actual.result) continue
+        result = actual.result
+      } else {
+        result = simulate(fixtures[Number(ticket.event.split('-')[1])])
+      }
       db().prepare('INSERT INTO sports_result VALUES (?, ?, ?)').run(ticket.event, result.winner, result.score)
     }
     const won = result.winner === ticket.selection
@@ -90,21 +112,67 @@ export function refreshSports(id: string, now = Date.now()) {
   atomic(() => settle(id, now))
 }
 
-export function sportsbook(id: string, input: Command, now = Date.now()) {
+export async function sportsbookFootball(id: string) {
+  const fixtures = await currentFootballFixtures()
+  const token = process.env.CASINO_FOOTBALL_DATA_TOKEN
+  if (!fixtures || !token) return fixtures
+  const listed = new Set(fixtures.map(fixture => fixture.id))
+  const now = Date.now()
+  const overdue = db().prepare(
+    `SELECT event FROM sports_ticket WHERE player = ? AND event LIKE 'football-data:%'
+     AND settles <= ? AND (state = 'Open' OR settles >= ?)
+     ORDER BY (state = 'Open') DESC, CASE WHEN state = 'Open' THEN settles ELSE -settles END`,
+  ).all(id, now, now - revisionWindow).flatMap(({ event }) =>
+    typeof event === 'string' && !listed.has(event) ? [event] : [],
+  )
+  const older = await currentFootballResults(token, overdue)
+  // Supplemental responses may settle or revise tickets but never open markets.
+  return [...fixtures, ...older.filter(fixture => overdue.includes(fixture.id) && fixture.status !== 'TIMED')]
+}
+
+function recordFootballRevisions(football: FootballFixture[], now: number) {
+  const settled = db().prepare('SELECT score FROM sports_result WHERE event = ?')
+  const save = db().prepare(
+    `INSERT INTO sports_result_revision VALUES (?, ?, ?)
+     ON CONFLICT(event) DO UPDATE SET score = excluded.score, observed = excluded.observed
+     WHERE score <> excluded.score`,
+  )
+  const clear = db().prepare('DELETE FROM sports_result_revision WHERE event = ?')
+  for (const match of football) {
+    if (!match.result) continue
+    const original = settled.get(match.id)
+    if (!original) continue
+    if (original.score === match.result.score) clear.run(match.id)
+    else save.run(match.id, match.result.score, now)
+  }
+}
+
+export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null) {
   return atomic(() => {
-    settle(id, now)
+    settle(id, now, football ?? [])
+    if (football?.length) recordFootballRevisions(football, now)
     const window = Math.floor(now / interval)
-    const events = fixtures.map((_, index) => {
+    const simulated = fixtures.map((_, index) => {
       const previous = market(index, window - 1)
       return previous.starts > now ? previous : market(index, window)
     })
+    const real = (football ?? []).filter(match => match.status === 'TIMED' && match.starts > now)
+      .map(({ id, starts, sport, league, home, away }) => ({
+        id, starts, settles: starts, sport, league, home, away,
+        options: [home, 'Draw', away].map((label, selection) => ({ label, selection, price: [235, 320, 310][selection] })),
+      }))
+    const footballStatus = !process.env.CASINO_FOOTBALL_DATA_TOKEN && football === null
+      ? 'simulated'
+      : football === null ? 'unavailable' : 'current'
+    const events = [...real, ...simulated.filter(event => footballStatus === 'simulated' || event.sport !== 'Football')]
     let message: string | undefined
     if (input.action === 'sports-place') {
       const state = player(id)!
       if (state.paused) throw new Error('Demo wagering is paused for this session.')
       const event = events.find(item => item.id === input.event)
       const option = event?.options.find(item => item.selection === input.selection)
-      if (!event || !option || now >= event.starts || option.price !== input.price) {
+      if (!event || !option || now >= event.starts || option.price !== input.price ||
+          (event.id.startsWith('football-data:') && event.starts !== input.starts)) {
         throw new Error('This market or price has expired. Refresh the fixtures.')
       }
       if (db().prepare('SELECT id FROM sports_ticket WHERE player = ? AND event = ?').get(id, event.id)) {
@@ -134,6 +202,6 @@ export function sportsbook(id: string, input: Command, now = Date.now()) {
       record(id, 'Sports wager', -stake, event.home + ' vs ' + event.away + ' · ' + option.label, 'Sportsbook')
       message = 'Demo ticket accepted.'
     }
-    return { sports: { events, tickets: tickets(id), time: now }, message }
+    return { sports: { events, tickets: tickets(id), time: now, footballStatus }, message }
   })
 }

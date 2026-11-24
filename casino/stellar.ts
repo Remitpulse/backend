@@ -28,16 +28,59 @@ function transaction(xdr: string) {
   return tx
 }
 
-async function settle(xdr: string, hash: string) {
+export function transferExpiry(envelope: string) {
   try {
-    const confirmed = await horizon.transactions().transaction(hash).call()
-    if (!confirmed.successful) throw new Error('The Testnet transaction failed.')
-    return
-  } catch (error) {
-    if ((error as { response?: { status?: number } }).response?.status !== 404) throw error
+    const tx = transaction(envelope)
+    const maxTime = Number("timeBounds" in tx ? tx.timeBounds?.maxTime : undefined)
+    if (Number.isSafeInteger(maxTime) && maxTime > 0 && maxTime <= 8_640_000_000_000) {
+      return maxTime * 1000
+    }
+  } catch {
+    // An unreadable envelope supplies no deadline.
   }
+  return null
+}
+
+export async function testnetTransferStatus(hash: string) {
+  try {
+    const receipt = await horizon.transactions().transaction(hash).call()
+    if (receipt.hash !== hash || typeof receipt.successful !== 'boolean' ||
+        !Number.isSafeInteger(receipt.ledger_attr) || receipt.ledger_attr <= 0) {
+      throw new Error('Horizon returned an incomplete or mismatched transfer receipt.')
+    }
+    return { status: receipt.successful ? 'confirmed' : 'failed', ledger: receipt.ledger_attr }
+  } catch (error) {
+    if ((error as { response?: { status?: number } }).response?.status === 404) {
+      return { status: 'not-found', ledger: null }
+    }
+    throw error
+  }
+}
+
+export async function settleTestnetEnvelope(xdr: string, hash: string, lookup = testnetTransferStatus) {
+  const receipt = await lookup(hash)
+  if (receipt.status !== 'not-found') return receipt.status
+  const expiry = transferExpiry(xdr)
+  if (expiry !== null && Date.now() > expiry) return 'expired'
   const confirmed = await horizon.submitTransaction(transaction(xdr))
   if (confirmed.hash !== hash) throw new Error('Unexpected Stellar transaction hash.')
+  return 'confirmed'
+}
+
+export async function walletBalance(wallet: unknown) {
+  if (typeof wallet !== 'string' || !StrKey.isValidEd25519PublicKey(wallet)) {
+    throw new Error('Connect a Stellar Testnet wallet.')
+  }
+  try {
+    const account = await horizon.loadAccount(wallet)
+    const native = account.balances.find(balance => balance.asset_type === 'native')
+    return { walletBalance: { funded: true, stroops: native ? parseXlm(native.balance).toString() : '0' } }
+  } catch (error) {
+    if ((error as { response?: { status?: number } }).response?.status === 404) {
+      return { walletBalance: { funded: false, stroops: '0' } }
+    }
+    throw error
+  }
 }
 
 export async function payment(id: string, input: Command) {
@@ -49,7 +92,12 @@ export async function payment(id: string, input: Command) {
       throw new Error('Connect a Stellar Testnet wallet.')
     if (state.wallet && state.wallet !== input.wallet) throw new Error('Use the wallet already linked to this session.')
     const value = amount(input.amount)
-    const account = await horizon.loadAccount(input.wallet)
+    const account = await horizon.loadAccount(input.wallet).catch((error: unknown) => {
+      if ((error as { response?: { status?: number } }).response?.status === 404) {
+        throw new Error('This wallet has no Stellar Testnet account. Fund it with Testnet XLM, then retry.')
+      }
+      throw error
+    })
     const tx = new TransactionBuilder(account, options)
       .addOperation(Operation.payment({ destination: key.publicKey(), asset: Asset.native(), amount: xlm(value, 0) }))
       .addMemo(Memo.text(createHash('sha256').update(id).digest('hex').slice(0, 24)))
@@ -86,6 +134,8 @@ export async function payment(id: string, input: Command) {
     const intent = db().prepare('SELECT * FROM deposit WHERE hash = ? AND player = ?').get(hash, id) as Deposit | undefined
     if (!intent) throw new Error('Payment does not match this session’s deposit request.')
     if (intent.credited) return { message: 'Deposit already credited.', hash }
+    const failure = { message: 'Stellar Testnet recorded this deposit as failed. Start a new deposit.', hash }
+    if (db().prepare('SELECT hash FROM failed_deposit WHERE hash = ?').get(hash)) return failure
 
     if (input.action === 'deposit-submit') {
       const signed = transaction(envelope)
@@ -102,19 +152,23 @@ export async function payment(id: string, input: Command) {
       })
     }
 
-    await settle(envelope, hash)
-    atomic(() => {
-      const credited = db().prepare('UPDATE deposit SET credited = 1 WHERE hash = ? AND credited = 0').run(hash)
-      if (!credited.changes) return
-      const value = BigInt(intent.amount)
-      db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, id)
-      record(id, 'Testnet deposit', value, hash)
-    })
+    const outcome = await settleTestnetEnvelope(envelope, hash)
+    if (outcome === 'expired') {
+      throw new Error('This signed deposit expired and Horizon has no receipt. Check with the operator before retrying.')
+    }
+    if (outcome === 'failed') {
+      markFailedDeposit(hash)
+      return failure
+    }
+    creditDeposit(intent)
     return { message: 'Testnet deposit confirmed.', hash }
   }
 
   if (input.action !== 'withdraw' && input.action !== 'withdraw-retry') throw new Error('Choose a wallet action.')
   let pending = db().prepare('SELECT * FROM withdrawal WHERE player = ? AND pending = 1').get(id) as Transfer | undefined
+  if (input.action === 'withdraw-retry' && input.hash !== undefined && input.hash !== pending?.hash) {
+    throw new Error('This withdrawal is no longer pending. Refresh your wallet history.')
+  }
   if (!pending) {
     if (input.action === 'withdraw-retry') throw new Error('There is no pending withdrawal in this session.')
     if (input.eligible !== true) throw new Error('Confirm Testnet participation to continue.')
@@ -140,17 +194,82 @@ export async function payment(id: string, input: Command) {
     pending = { hash, player: id, amount: value.toString(), xdr: envelope }
   }
   const transfer = pending
+  let outcome: Awaited<ReturnType<typeof settleTestnetEnvelope>>
   try {
-    await settle(transfer.xdr, transfer.hash)
+    outcome = await settleTestnetEnvelope(transfer.xdr, transfer.hash)
   } catch {
     throw new Error('Withdrawal is reserved, awaiting Testnet confirmation. Retry confirmation from the wallet panel.')
   }
-  atomic(() => {
-    if (db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash).changes) {
-      record(id, 'Testnet withdrawal confirmed', 0n, transfer.hash)
-    }
-  })
+  if (outcome === 'expired') {
+    throw new Error('The signed withdrawal expired and Horizon has no receipt. Your XLM remains reserved for operator review.')
+  }
+  if (outcome === 'failed') {
+    releaseFailedWithdrawal(transfer)
+    return { message: 'Testnet withdrawal failed. The reserved XLM was returned to your balance.', hash: transfer.hash }
+  }
+  confirmWithdrawal(transfer)
   return { message: 'Testnet withdrawal confirmed.', hash: transfer.hash }
+}
+
+function creditDeposit(intent: Deposit) {
+  return atomic(() => {
+    const credited = db().prepare('UPDATE deposit SET credited = 1 WHERE hash = ? AND credited = 0').run(intent.hash)
+    if (!credited.changes) return false
+    const value = BigInt(intent.amount)
+    db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, intent.player)
+    record(intent.player, 'Testnet deposit', value, intent.hash)
+    return true
+  })
+}
+
+function confirmWithdrawal(transfer: Transfer) {
+  return atomic(() => {
+    const confirmed = db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash)
+    if (!confirmed.changes) return false
+    record(transfer.player, 'Testnet withdrawal confirmed', 0n, transfer.hash)
+    return true
+  })
+}
+
+function releaseFailedWithdrawal(transfer: Transfer) {
+  return atomic(() => {
+    const released = db().prepare('UPDATE withdrawal SET pending = 0 WHERE hash = ? AND pending = 1').run(transfer.hash)
+    if (!released.changes) return false
+    const value = BigInt(transfer.amount)
+    db().prepare('UPDATE player SET testnet = testnet + ? WHERE id = ?').run(value, transfer.player)
+    record(transfer.player, 'Failed Testnet withdrawal released', value, transfer.hash)
+    return true
+  })
+}
+
+function markFailedDeposit(hash: string) {
+  return db().prepare('INSERT OR IGNORE INTO failed_deposit VALUES (?, ?)').run(hash, new Date().toISOString()).changes > 0
+}
+
+export async function reconcileTestnetTransfer(hash: string, lookup = testnetTransferStatus) {
+  const deposit = db().prepare(
+    'SELECT deposit.* FROM deposit JOIN signed_deposit USING (hash) WHERE hash = ?',
+  ).get(hash) as Deposit | undefined
+  const withdrawal = db().prepare('SELECT * FROM withdrawal WHERE hash = ?').get(hash) as
+    (Transfer & { pending: number }) | undefined
+  if (!deposit && !withdrawal) throw new Error('No signed or reserved transfer matches this hash.')
+  if (deposit?.credited || withdrawal?.pending === 0 ||
+      db().prepare('SELECT hash FROM failed_deposit WHERE hash = ?').get(hash)) {
+    return { message: 'The transfer is already reconciled.' }
+  }
+
+  const receipt = await lookup(hash)
+  if (deposit && receipt.status === 'failed') {
+    const marked = markFailedDeposit(hash)
+    return { message: marked ? 'Failed deposit closed without credit.' : 'The transfer is already reconciled.' }
+  }
+  if (withdrawal && receipt.status === 'failed') {
+    const released = releaseFailedWithdrawal(withdrawal)
+    return { message: released ? 'Failed withdrawal reserve returned to the player.' : 'The transfer is already reconciled.' }
+  }
+  if (receipt.status !== 'confirmed') throw new Error('Reconciliation requires a confirmed Testnet receipt.')
+  const changed = deposit ? creditDeposit(deposit) : confirmWithdrawal(withdrawal!)
+  return { message: changed ? 'Confirmed transfer reconciled.' : 'The transfer is already reconciled.' }
 }
 
 export async function treasuryBalance() {

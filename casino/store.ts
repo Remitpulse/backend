@@ -33,13 +33,24 @@ export function db() {
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, wallet TEXT NOT NULL,
       amount TEXT NOT NULL, xdr TEXT NOT NULL, credited INTEGER NOT NULL DEFAULT 0
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS dice_commitment (
+      player TEXT PRIMARY KEY, commitment TEXT NOT NULL, seed TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS dice_proof (
+      entry TEXT PRIMARY KEY, proof TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS deposit_player ON deposit(player);
     CREATE TABLE IF NOT EXISTS signed_deposit (
       hash TEXT PRIMARY KEY, xdr TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS failed_deposit (
+      hash TEXT PRIMARY KEY, created TEXT NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS withdrawal (
       hash TEXT PRIMARY KEY, player TEXT NOT NULL, amount TEXT NOT NULL,
       xdr TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 1
     ) STRICT;
+    CREATE INDEX IF NOT EXISTS withdrawal_player ON withdrawal(player);
     CREATE TABLE IF NOT EXISTS sports_ticket (
       id TEXT PRIMARY KEY, player TEXT NOT NULL, event TEXT NOT NULL, label TEXT NOT NULL,
       selection INTEGER NOT NULL, selection_label TEXT NOT NULL, price INTEGER NOT NULL, stake INTEGER NOT NULL,
@@ -48,6 +59,9 @@ export function db() {
     ) STRICT;
     CREATE TABLE IF NOT EXISTS sports_result (
       event TEXT PRIMARY KEY, winner INTEGER NOT NULL, score TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS sports_result_revision (
+      event TEXT PRIMARY KEY, score TEXT NOT NULL, observed INTEGER NOT NULL
     ) STRICT;
     CREATE UNIQUE INDEX IF NOT EXISTS treasury_pending ON withdrawal(pending) WHERE pending = 1;
   `)
@@ -69,9 +83,11 @@ export function atomic<T>(action: () => T): T {
 }
 
 export function record(player: string, kind: string, amount: bigint, detail: string, game: string | null = null) {
+  const entry = randomUUID()
   db()
     .prepare('INSERT INTO entry VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(randomUUID(), player, kind, game, amount, detail, new Date().toISOString())
+    .run(entry, player, kind, game, amount, detail, new Date().toISOString())
+  return entry
 }
 
 export function createPlayer(id: string) {
@@ -111,9 +127,11 @@ export function snapshot(id: string): CasinoState {
   const state = player(id)!
   const entries = db()
     .prepare(
-      'SELECT id, kind, game, CAST(amount AS TEXT) AS amount, detail, created FROM entry WHERE player = ? ORDER BY rowid DESC LIMIT 40'
+      `SELECT entry.id, kind, game, CAST(amount AS TEXT) AS amount, detail, created, dice_proof.proof
+       FROM entry LEFT JOIN dice_proof ON dice_proof.entry = entry.id
+       WHERE entry.player = ? ORDER BY entry.rowid DESC LIMIT 40`
     )
-    .all(id) as Entry[]
+    .all(id) as (Omit<Entry, 'proof'> & { proof: string | null })[]
   const mineCount = state.mines ? (JSON.parse(state.mines) as number[]).length : 3
   const picks: number[] = state.picks ? JSON.parse(state.picks) : []
   const withdrawal = db().prepare('SELECT hash, amount FROM withdrawal WHERE player = ? AND pending = 1').get(id) as
@@ -122,15 +140,37 @@ export function snapshot(id: string): CasinoState {
     .prepare(
       `
     SELECT hash, amount FROM deposit JOIN signed_deposit USING (hash)
-    WHERE player = ? AND credited = 0 ORDER BY deposit.rowid DESC LIMIT 1
+    WHERE player = ? AND credited = 0 AND hash NOT IN (SELECT hash FROM failed_deposit) ORDER BY deposit.rowid DESC LIMIT 1
   `
     )
     .get(id) as CasinoState['deposit'] | undefined
+  const transfers = db().prepare(
+    `SELECT hash, amount, direction, status, created FROM (
+      SELECT d.hash, d.amount, 'deposit' AS direction,
+        CASE WHEN d.credited = 1 THEN 'confirmed' WHEN f.hash IS NOT NULL THEN 'failed' ELSE 'pending' END AS status,
+        COALESCE(MAX(e.created), f.created, '') AS created
+      FROM deposit d JOIN signed_deposit s USING (hash)
+      LEFT JOIN failed_deposit f ON f.hash = d.hash
+      LEFT JOIN entry e ON e.player = d.player AND e.detail = d.hash AND e.kind = 'Testnet deposit'
+      WHERE d.player = ? GROUP BY d.hash
+      UNION ALL
+      SELECT w.hash, w.amount, 'withdrawal',
+        CASE WHEN w.pending = 1 THEN 'pending'
+             WHEN MAX(e.kind = 'Failed Testnet withdrawal released') = 1 THEN 'failed'
+             ELSE 'confirmed' END,
+        COALESCE(MAX(e.created), '')
+      FROM withdrawal w
+      LEFT JOIN entry e ON e.player = w.player AND e.detail = w.hash
+        AND e.kind IN ('Withdrawal reserved', 'Testnet withdrawal confirmed', 'Failed Testnet withdrawal released')
+      WHERE w.player = ? GROUP BY w.hash
+    ) ORDER BY (status = 'pending') DESC, created DESC, hash LIMIT 8`,
+  ).all(id, id) as CasinoState['transfers']
   return {
     demo: state.demo.toString(),
     testnet: state.testnet.toString(),
-    entries,
+    entries: entries.map(({ proof, ...entry }) => proof ? { ...entry, proof: JSON.parse(proof) as Entry['proof'] } : entry),
     paused: state.paused === 1n,
+    linkedWallet: state.wallet,
     walletEnabled: Boolean(process.env.CASINO_TESTNET_TREASURY_SECRET),
     round: state.stake
       ? {
@@ -141,6 +181,7 @@ export function snapshot(id: string): CasinoState {
           nextPayout: minesPayout(BigInt(state.stake), picks.length + 1, mineCount).toString(),
         }
       : null,
+    transfers,
     deposit: deposit || null,
     withdrawal: withdrawal || null,
   }

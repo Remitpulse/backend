@@ -1,10 +1,10 @@
-import { refreshSports, sportsbook } from './sports.ts'
+import { refreshSports, sportsbook, sportsbookFootball } from './sports.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createPlayer, db, player, snapshot } from './store.ts'
 import { play } from './game.ts'
 import { hasPasskey, passkey } from './passkeys.ts'
-import { payment, treasuryBalance } from './stellar.ts'
+import { payment, treasuryBalance, testnetTransferStatus, reconcileTestnetTransfer, transferExpiry, walletBalance } from './stellar.ts'
 
 const port = Number(process.env.PORT || '4010')
 const host = process.env.CASINO_HOST || '127.0.0.1'
@@ -36,6 +36,7 @@ function adminAllowed(header: string | undefined) {
 }
 
 async function report() {
+  const ledgerObservedAt = new Date().toISOString()
   const database = db()
   const totals = database
     .prepare(
@@ -56,18 +57,69 @@ async function report() {
   const pending = database
     .prepare(
       `
-    SELECT hash, amount FROM withdrawal WHERE pending = 1
+    SELECT withdrawal.hash, withdrawal.amount, player.wallet
+    FROM withdrawal JOIN player ON player.id = withdrawal.player WHERE withdrawal.pending = 1
   `
     )
     .all()
+  const pendingDeposits = database
+    .prepare(
+      `
+    SELECT deposit.hash, deposit.amount, deposit.wallet FROM deposit JOIN signed_deposit USING (hash)
+    WHERE deposit.credited = 0 AND deposit.hash NOT IN (SELECT hash FROM failed_deposit) ORDER BY deposit.rowid ASC LIMIT 100
+  `
+    )
+    .all()
+  const footballRevisions = database.prepare(
+    `SELECT r.event, original.score AS originalScore, r.score AS revisedScore, r.observed,
+       (SELECT COUNT(*) FROM sports_ticket ticket
+        WHERE ticket.event = r.event AND ticket.state <> 'Open') AS settledTickets
+     FROM sports_result_revision r JOIN sports_result original ON original.event = r.event
+     ORDER BY r.observed DESC, r.event LIMIT 50`,
+  ).all()
+  const balanceAudit = database.prepare(
+    `WITH movement AS (
+       SELECT player, SUM(amount) AS net FROM entry
+       WHERE kind IN ('Testnet deposit', 'Withdrawal reserved', 'Failed Testnet withdrawal released')
+       GROUP BY player
+     ), reservations AS (
+       SELECT detail, COUNT(*) AS entries, MIN(player) AS player, MIN(amount) AS amount
+       FROM entry WHERE kind = 'Withdrawal reserved' GROUP BY detail
+     ), credits AS (
+       SELECT detail, COUNT(*) AS entries, MIN(player) AS player, MIN(amount) AS amount
+       FROM entry WHERE kind = 'Testnet deposit' GROUP BY detail
+     )
+     SELECT (SELECT COUNT(*) FROM player p LEFT JOIN movement m ON m.player = p.id
+       WHERE p.testnet <> COALESCE(m.net, 0)) AS mismatchedPlayers,
+       (SELECT COUNT(*) FROM movement m LEFT JOIN player p ON p.id = m.player
+       WHERE p.id IS NULL) AS missingPlayers,
+       (SELECT COUNT(*) FROM withdrawal w LEFT JOIN reservations r ON r.detail = w.hash
+        WHERE w.pending = 1 AND (COALESCE(r.entries, 0) <> 1 OR r.player <> w.player
+          OR CAST(-r.amount AS TEXT) <> w.amount)) AS reservationMismatches,
+       (SELECT COUNT(*) FROM deposit d LEFT JOIN credits c ON c.detail = d.hash
+        WHERE d.credited = 1 AND (COALESCE(c.entries, 0) <> 1 OR c.player <> d.player
+          OR CAST(c.amount AS TEXT) <> d.amount))
+       + (SELECT COUNT(*) FROM credits c LEFT JOIN deposit d ON d.hash = c.detail
+          WHERE d.credited IS NULL OR d.credited <> 1) AS depositCreditMismatches`,
+  ).get()
+  const reserved = pending.reduce((sum, transfer) => sum + BigInt(String(transfer.amount)), 0n)
+  const liabilities = BigInt(String(totals?.testnet ?? '0')) + reserved
   let treasury = null
   let treasuryIssue = ''
+  let treasuryObservedAt: string | null = null
   try {
     treasury = await treasuryBalance()
+    if (treasury !== null) treasuryObservedAt = new Date().toISOString()
   } catch {
     treasuryIssue = 'Horizon balance unavailable.'
   }
-  return { treasury, treasuryIssue, totals, activity, pending }
+  const reconciliation = {
+    reserved: reserved.toString(),
+    balanceAudit,
+    liabilities: liabilities.toString(),
+    grossDifference: treasury === null ? null : (BigInt(treasury) - liabilities).toString(),
+  }
+  return { treasury, treasuryIssue, ledgerObservedAt, treasuryObservedAt, totals, activity, pending, pendingDeposits, reconciliation, footballRevisions }
 }
 
 function sessionCookie(response: ServerResponse, token: string) {
@@ -93,6 +145,17 @@ createServer(async (request, response) => {
   const url = request.url
   try {
     if (url === '/health' && request.method === 'GET') return send(response, 200, { status: 'ok', network: 'stellar-testnet' })
+    if (url?.startsWith('/admin/transfer/') && (request.method === 'GET' || request.method === 'POST')) {
+      if (!adminAllowed(request.headers.authorization)) return send(response, 401, { error: 'Enter a valid operator token.' })
+      const hash = url.slice('/admin/transfer/'.length)
+      if (!/^[a-f0-9]{64}$/.test(hash)) return send(response, 400, { error: 'Invalid transfer hash.' })
+      if (request.method === 'POST') return send(response, 200, await reconcileTestnetTransfer(hash))
+      const transfer = db().prepare(
+        'SELECT xdr FROM deposit WHERE hash = ? UNION ALL SELECT xdr FROM withdrawal WHERE hash = ? LIMIT 1',
+      ).get(hash, hash)
+      if (typeof transfer?.xdr !== 'string') return send(response, 404, { error: 'Transfer not found in the ledger.' })
+      return send(response, 200, { ...(await testnetTransferStatus(hash)), expiresAt: transferExpiry(transfer.xdr) })
+    }
     if (url === '/admin' && request.method === 'GET') {
       if (!adminAllowed(request.headers.authorization)) return send(response, 401, { error: 'Enter a valid operator token.' })
       return send(response, 200, await report())
@@ -126,9 +189,12 @@ createServer(async (request, response) => {
       }
       return send(response, 200, { state: state(login || id), ...result })
     }
+    if (input.action === 'wallet-balance') {
+      return send(response, 200, { state: state(id), ...(await walletBalance(input.wallet)) })
+    }
     const result =
       input.action === 'sports-market' || input.action === 'sports-place'
-        ? sportsbook(id, input)
+        ? sportsbook(id, input, undefined, await sportsbookFootball(id))
         : walletCommands.has(String(input.action))
           ? await payment(id, input)
           : play(id, input)
