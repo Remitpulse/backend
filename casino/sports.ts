@@ -157,8 +157,8 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
       return previous.starts > now ? previous : market(index, window)
     })
     const real = (football ?? []).filter(match => match.status === 'TIMED' && match.starts > now)
-      .map(({ id, starts, sport, league, home, away }) => ({
-        id, starts, settles: starts, sport, league, home, away,
+      .map(({ id, starts, sport, league, home, away, homeBadge, awayBadge }) => ({
+        id, starts, settles: starts, sport, league, home, away, homeBadge, awayBadge,
         options: [home, 'Draw', away].map((label, selection) => ({ label, selection, price: [235, 320, 310][selection] })),
       }))
     const footballStatus = !process.env.CASINO_FOOTBALL_DATA_TOKEN && football === null

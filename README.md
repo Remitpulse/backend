@@ -137,3 +137,10 @@ The audit checks integrity, individual Testnet balances, and pending transfers.
 Keep the restore drill disconnected from the treasury signer. Before replacing a live
 database, stop the service, preserve its database and WAL files together, and
 reconcile on-chain transfers since the snapshot.
+### Worldwide daily schedule
+
+Set `CASINO_SPORTSDB_KEY` to your TheSportsDB API key. The sportsbook fetches
+today and tomorrow in UTC, caches each date for up to 24 hours, and expires
+past kickoff times. The available leagues, sports and badges depend on the
+provider's coverage and plan. This calendar is for browsing. Existing demo
+markets and football-data.org ticket settlement retain their existing rules.

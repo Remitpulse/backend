@@ -6,8 +6,8 @@ type Match = {
   utcDate?: string
   status?: string
   competition?: { name?: string }
-  homeTeam?: { name?: string }
-  awayTeam?: { name?: string }
+  homeTeam?: { name?: string; crest?: string }
+  awayTeam?: { name?: string; crest?: string }
   score?: {
     duration?: string
     fullTime?: Score
@@ -36,7 +36,12 @@ export function footballFixture(match: Match) {
     && typeof awayGoals === 'number' && Number.isSafeInteger(awayGoals) && awayGoals >= 0
     ? { winner: homeGoals === awayGoals ? 1 : homeGoals > awayGoals ? 0 : 2, score: `${homeGoals}–${awayGoals}` }
     : null
-  return { id: 'football-data:' + id, starts, sport: 'Football' as const, league, home, away, status, result }
+  const crest = (value: unknown) => typeof value === 'string' &&
+    /^https:\/\/crests\.football-data\.org\/[\w.-]+\.(?:svg|png|webp)$/.test(value) ? value : undefined
+  const badges: { homeBadge?: string; awayBadge?: string } = {
+    homeBadge: crest(match.homeTeam?.crest), awayBadge: crest(match.awayTeam?.crest),
+  }
+  return { ...badges, id: 'football-data:' + id, starts, sport: 'Football' as const, league, home, away, status, result }
 }
 
 export async function loadFootballFixtures(token: string, now = Date.now(), fetcher = fetch) {

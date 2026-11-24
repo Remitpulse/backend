@@ -1,3 +1,4 @@
+import { dailySchedule } from './schedule.ts'
 import { refreshSports, sportsbook, sportsbookFootball } from './sports.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -191,6 +192,9 @@ createServer(async (request, response) => {
     }
     if (input.action === 'wallet-balance') {
       return send(response, 200, { state: state(id), ...(await walletBalance(input.wallet)) })
+    }
+    if (input.action === 'sports-schedule') {
+      return send(response, 200, { state: state(id), schedule: await dailySchedule() })
     }
     const result =
       input.action === 'sports-market' || input.action === 'sports-place'
