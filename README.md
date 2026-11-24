@@ -142,5 +142,8 @@ reconcile on-chain transfers since the snapshot.
 Set `CASINO_SPORTSDB_KEY` to your TheSportsDB API key. The sportsbook fetches
 today and tomorrow in UTC, caches each date for up to 24 hours, and expires
 past kickoff times. The available leagues, sports and badges depend on the
-provider's coverage and plan. This calendar is for browsing. Existing demo
-markets and football-data.org ticket settlement retain their existing rules.
+provider's coverage and plan. With the feed enabled, supported matches become
+pre-match XLM demo markets. New tickets use fixed demo odds, close at kickoff
+and settle from the provider's final score. Missing or provisional scores keep
+tickets open. Existing football-data.org and simulated tickets keep their
+original settlement rules.

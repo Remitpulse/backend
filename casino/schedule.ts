@@ -15,6 +15,12 @@ function badge(value: unknown) {
   }
 }
 
+const scheduledStatus = /^(?:|NS|TBD|Not Started|Scheduled)$/i
+const finalStatus = /^(?:FT|AET|PEN|Final|Finished|Match Finished|After Extra Time|After Penalties)$/i
+const voidStatus = /^(?:CANC|ABD|AWD|WO|Cancelled|Canceled|Abandoned|Awarded|Walkover)$/i
+const drawable = new Set(['Football', 'Ice Hockey', 'American Football', 'Rugby', 'Rugby League', 'Rugby Union', 'Handball'])
+const supported = new Set([...drawable, 'Basketball', 'Baseball', 'Tennis', 'Volleyball', 'Cricket', 'Badminton', 'Table Tennis', 'Netball', 'Water Polo', 'Field Hockey'])
+
 function fixture(row: Record<string, unknown>) {
   const { idEvent, strTimestamp, strSport, strLeague, strHomeTeam, strAwayTeam, strStatus } = row
   if (typeof idEvent !== 'string' || !/^\d+$/.test(idEvent) ||
@@ -23,11 +29,12 @@ function fixture(row: Record<string, unknown>) {
       typeof strLeague !== 'string' || !strLeague.trim() ||
       typeof strHomeTeam !== 'string' || !strHomeTeam.trim() ||
       typeof strAwayTeam !== 'string' || !strAwayTeam.trim() ||
-      /cancel|postpon|abandon|finish/i.test(String(strStatus))) return null
+      strHomeTeam === strAwayTeam) return null
   const starts = Date.parse(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(strTimestamp)
     ? strTimestamp + 'Z' : strTimestamp)
   if (!Number.isFinite(starts)) return null
   return {
+    status: typeof strStatus === 'string' ? strStatus.trim() : '',
     id: 'sportsdb:' + idEvent,
     starts,
     sport: strSport === 'Soccer' ? 'Football' : strSport,
@@ -75,11 +82,83 @@ export async function dailySchedule(now = Date.now()) {
     return response
   }))
   const fixtures = [...new Map(days.flatMap(day => (day ?? []).map(match => [match.id, match] as const))).values()]
-    .filter(match => match.starts > now)
+    .filter(match => match.starts > now && scheduledStatus.test(match.status))
     .sort((left, right) => left.starts - right.starts)
   return {
     status: days.every(day => day === null) ? 'unavailable' as const :
       days.some(day => day === null) ? 'partial' as const : 'current' as const,
     fixtures,
   }
+}
+
+
+export function scheduledMarket(match: ScheduleFixture) {
+  if (!supported.has(match.sport)) return []
+  const labels = drawable.has(match.sport) ? [match.home, 'Draw', match.away] : [match.home, match.away]
+  const prices = labels.length === 3 ? [270, 310, 270] : [190, 190]
+  return [{
+    ...match,
+    settles: match.starts,
+    options: labels.map((label, selection) => ({ label, selection, price: prices[selection] })),
+  }]
+}
+
+export function scheduleResult(row: Record<string, unknown>) {
+  const status = typeof row.strStatus === 'string' ? row.strStatus.trim() : ''
+  if (voidStatus.test(status)) return { void: true as const, score: status }
+  if (!finalStatus.test(status)) return
+  const match = fixture(row)
+  if (!match || !supported.has(match.sport)) return
+  const rawHome = row.intHomeScore
+  const rawAway = row.intAwayScore
+  if (!/^\d+$/.test(String(rawHome)) || !/^\d+$/.test(String(rawAway))) return
+  const home = Number(rawHome)
+  const away = Number(rawAway)
+  if (!Number.isSafeInteger(home) || !Number.isSafeInteger(away)) return
+  const score = home + '–' + away
+  const draw = drawable.has(match.sport)
+  if (home === away && !draw) return { void: true as const, score }
+  return { winner: home === away ? 1 : home > away ? 0 : draw ? 2 : 1, score }
+}
+
+type Lookup = { match: ScheduleFixture | null; result: ReturnType<typeof scheduleResult> }
+const lookups = new Map<string, { expires: number; response: Promise<Lookup | undefined> }>()
+let budgetUntil = 0
+let requests = 0
+
+export function scheduleLookup(id: string, now = Date.now()) {
+  const key = process.env.CASINO_SPORTSDB_KEY
+  const providerId = /^sportsdb:(\d{1,16})$/.exec(id)?.[1]
+  if (!key || !providerId) return
+  const existing = lookups.get(id)
+  if (existing && existing.expires > now) return existing.response
+  if (now >= budgetUntil) {
+    budgetUntil = now + 60_000
+    requests = 0
+  }
+  if (requests >= 20) return
+  requests++
+  const url = new URL('https://www.thesportsdb.com/api/v1/json/' + encodeURIComponent(key) + '/lookupevent.php')
+  url.searchParams.set('id', providerId)
+  const response = fetch(url, { signal: AbortSignal.timeout(6000), redirect: 'error' }).then(async response => {
+    if (!response.ok) return
+    const { events } = await response.json() as { events?: unknown }
+    if (!Array.isArray(events) || events.length !== 1 || events[0]?.idEvent !== providerId) return
+    return { match: fixture(events[0]), result: scheduleResult(events[0]) }
+  }).catch(() => undefined)
+  lookups.delete(id)
+  lookups.set(id, { expires: now + 30_000, response })
+  if (lookups.size > 256) {
+    const oldest = lookups.keys().next().value
+    if (oldest) lookups.delete(oldest)
+  }
+  return response
+}
+
+export type Schedule = Awaited<ReturnType<typeof dailySchedule>>
+export type ScheduleResults = Map<string, NonNullable<Lookup['result']>>
+export function verifiedScheduledMatch(expected: ScheduleFixture, actual?: ScheduleFixture | null) {
+  return actual?.id === expected.id && actual.starts === expected.starts &&
+    actual.home === expected.home && actual.away === expected.away && actual.sport === expected.sport &&
+    scheduledStatus.test(actual.status)
 }
