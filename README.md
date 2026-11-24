@@ -2,6 +2,27 @@
 
 This Node.js 24 service owns game outcomes, sports tickets, and an exact XLM ledger in SQLite. Every XLM equals 10,000,000 stroops.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Player["Player browser"] --> UI["Next.js frontend"]
+    UI --> API["Casino backend"]
+    API --> DB[("SQLite ledger · integer stroops")]
+    API --> Stellar["Stellar Testnet Horizon"]
+    API --> Football["Optional football data provider"]
+    Player <--> Wallet["Freighter wallet"]
+```
+
+| Balance | Source | Used for |
+| --- | --- | --- |
+| Simulated XLM | Demo grant and simulated settlements | Casino and sports wagers |
+| Credited Testnet XLM | Confirmed native XLM deposits | Withdrawals to the linked wallet |
+| On-chain wallet XLM | Stellar Testnet account | Funds held by the player's wallet |
+| Treasury XLM | Operator's Testnet account | Holds deposits and sends withdrawals |
+
+The browser calls the same-origin Next.js relay at `/api/casino`. Keep the backend private in hosted deployments. The backend owns settlement and ledger mutations. A signed deposit is credited once, and a withdrawal reserves funds before submission.
+
 ## Start locally
 
 ```sh
@@ -10,6 +31,33 @@ npm start
 ```
 
 The default bind address is `127.0.0.1:4010`. Copy `.env.example` to `.env` for local overrides. Run `npm run typecheck` and `npm test` to verify the service.
+
+### Configuration
+
+| Variable | Default or purpose |
+| --- | --- |
+| `PORT`, `CASINO_HOST` | `4010`, `127.0.0.1` locally |
+| `CASINO_PUBLIC_ORIGIN` | Exact frontend origin for passkeys |
+| `CASINO_SECURE_COOKIE` | Set to `1` when served over HTTPS |
+| `CASINO_DATA_DIR` | SQLite directory, defaults to `.casino-data` locally |
+| `CASINO_TESTNET_TREASURY_SECRET` | Optional funded Testnet signer. Store it as a deployment secret. |
+| `CASINO_ADMIN_TOKEN` | Optional bearer token for the operator report and recovery actions |
+| `CASINO_FOOTBALL_DATA_TOKEN` | Optional server-side football-data.org token |
+
+The supplied Compose file forwards the treasury and operator credentials. To enable provider football under Compose, also pass `CASINO_FOOTBALL_DATA_TOKEN` into the `casino` service environment.
+
+### API at a glance
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Backend liveness and network identity |
+| `GET /game` | Load or establish the player session and return balances and activity |
+| `POST /game` | Process game actions, sports tickets, wallet operations, and passkeys |
+| `GET /admin` | Operator treasury, liability, and reconciliation report |
+| `GET /admin/transfer/{hash}` | Read Horizon status and envelope expiry |
+| `POST /admin/transfer/{hash}` | Reconcile an already recorded Testnet outcome |
+
+Player POST requests use JSON and the cookie issued by a preceding GET. Operator requests require `Authorization: Bearer <token>`.
 
 ## Games and sportsbook
 
@@ -42,6 +90,17 @@ score revision is displayed separately from the original settlement.
 Set `CASINO_TESTNET_TREASURY_SECRET` to a funded Testnet-only Stellar account to enable native XLM deposits and withdrawals. Freighter signs deposits. The backend credits a verified transaction hash once. Withdrawals reserve Testnet funds and send them to the linked wallet. Retries use the same signed envelope. The player and operator can check the same transaction hash after an interruption. A failed withdrawal receipt returns its reserve, and a failed deposit closes without credit. An expired envelope with no Horizon receipt remains pending for operator investigation.
 
 Set `CASINO_ADMIN_TOKEN` to enable the operator report. Set `CASINO_PUBLIC_ORIGIN` to the exact frontend origin for passkeys. Use HTTPS and `CASINO_SECURE_COOKIE=1` outside local development.
+
+### Transfer recovery
+
+| Horizon outcome | Deposit | Withdrawal |
+| --- | --- | --- |
+| Confirmed | Credit once by transaction hash | Close the reservation without debiting again |
+| Failed | Record failure without credit | Return the reserved stroops once |
+| No receipt, envelope valid | Retry the same signed envelope | Retry the same signed envelope |
+| No receipt, envelope expired | Keep pending for investigation | Keep the reserve pending for investigation |
+
+Use the operator dashboard to check the hash, wallet, and amount. Export the transfer record for independent verification in the [treasury toolkit](https://github.com/Remitpulse/contracts/tree/stellar-casino-milestone). Compare treasury and player liabilities with attention to pending transfers and Stellar account reserves.
 
 ## Deploy both services
 
