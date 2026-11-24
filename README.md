@@ -140,8 +140,9 @@ reconcile on-chain transfers since the snapshot.
 ### Worldwide daily schedule
 
 Set `CASINO_SPORTSDB_KEY` to your TheSportsDB API key. The sportsbook fetches
-today and tomorrow in UTC, caches each date for up to 24 hours, and expires
-past kickoff times. The available leagues, sports and badges depend on the
+today and tomorrow in UTC. It supplements the general feed with football,
+UEFA Champions League, basketball and tennis queries, caches each date for up
+to 24 hours, and expires past kickoff times. The available leagues, sports and badges depend on the
 provider's coverage and plan. With the feed enabled, supported matches become
 pre-match XLM demo markets. New tickets use fixed demo odds, close at kickoff
 and settle from the provider's final score. Missing or provisional scores keep

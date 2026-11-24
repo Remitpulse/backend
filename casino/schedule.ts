@@ -46,9 +46,20 @@ function fixture(row: Record<string, unknown>) {
   }
 }
 
-async function loadDay(date: string, key: string) {
+const dailyFilters = [
+  {},
+  { s: 'Soccer' },
+  { l: '4480' }, // UEFA Champions League
+  { s: 'Basketball' },
+  { s: 'Tennis' },
+]
+
+async function loadDay(date: string, key: string, filters: Record<string, string | undefined>) {
   const url = new URL('https://www.thesportsdb.com/api/v1/json/' + encodeURIComponent(key) + '/eventsday.php')
   url.searchParams.set('d', date)
+  for (const [name, value] of Object.entries(filters)) {
+    if (value) url.searchParams.set(name, value)
+  }
   const response = await fetch(url, { signal: AbortSignal.timeout(6000), redirect: 'error' })
   if (!response.ok) throw new Error('Schedule request failed.')
   const { events } = await response.json() as { events?: unknown }
@@ -68,11 +79,12 @@ export async function dailySchedule(now = Date.now()) {
   for (const date of cache.keys()) {
     if (!date.startsWith(today + ':')) cache.delete(date)
   }
-  const days = await Promise.all(dates.map(date => {
-    const cacheKey = today + ':' + date
+  const queries = dates.flatMap(date => dailyFilters.map((filters, index) => ({ date, filters, index })))
+  const days = await Promise.all(queries.map(({ date, filters, index }) => {
+    const cacheKey = today + ':' + date + ':' + index
     const entry = cache.get(cacheKey)
     if (entry && entry.expires > now) return entry.response
-    const response = loadDay(date, key).catch(() => {
+    const response = loadDay(date, key, filters).catch(() => {
       if (cache.get(cacheKey)?.response === response) {
         cache.set(cacheKey, { expires: now + 60_000, response: Promise.resolve(null) })
       }
@@ -136,7 +148,7 @@ export function scheduleLookup(id: string, now = Date.now()) {
     budgetUntil = now + 60_000
     requests = 0
   }
-  if (requests >= 20) return
+  if (requests >= 15) return
   requests++
   const url = new URL('https://www.thesportsdb.com/api/v1/json/' + encodeURIComponent(key) + '/lookupevent.php')
   url.searchParams.set('id', providerId)
