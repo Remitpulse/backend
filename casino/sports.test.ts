@@ -124,3 +124,32 @@ test('provider kickoff changes invalidate the selected quote before reserving a 
   assert.equal(player(id)?.demo, 10_000_000_000n)
   assert.equal(sportsbook(id, bet, now, [match]).sports.tickets.length, 1)
 })
+
+test('scheduled games replace fictional markets and settle once on a provider final', () => {
+  const now = Date.parse('2026-11-25T00:00:00Z')
+  const id = 'sports-daily-market'
+  const event = 'sportsdb:2574693'
+  const starts = now + 3_600_000
+  const schedule = {
+    status: 'current' as const,
+    fixtures: [{
+      id: event, starts, sport: 'Basketball', league: 'Test League',
+      home: 'Home Club', away: 'Away Club', status: 'NS',
+      homeBadge: undefined, awayBadge: undefined,
+    }],
+  }
+  createPlayer(id)
+  const market = sportsbook(id, { action: 'sports-market' }, now, null, schedule).sports
+  assert.deepEqual(market.events.map(fixture => fixture.id), [event])
+  const bet = { action: 'sports-place', event, starts, selection: 1, price: 190, amount: '0.1234567' }
+  assert.throws(() => sportsbook(id, { ...bet, starts: starts + 1 }, now, null, schedule), /expired/)
+  sportsbook(id, bet, now, null, schedule)
+  assert.equal(sportsbook(id, {}, starts, null, schedule).sports.tickets[0].state, 'Open')
+  const results = new Map([[event, { winner: 1, score: '92–98' }]])
+  const first = sportsbook(id, {}, starts, null, schedule, results).sports.tickets[0]
+  assert.equal(first.state, 'Won')
+  assert.equal(first.payout, '2345677')
+  const balance = player(id)!.demo
+  sportsbook(id, {}, starts + 1, null, schedule, results)
+  assert.equal(player(id)!.demo, balance)
+})

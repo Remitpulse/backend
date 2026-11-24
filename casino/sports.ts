@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto'
 import { atomic, db, player, record } from './store.ts'
 import { parseXlm, STROOPS } from './money.ts'
 import { currentFootballFixtures, currentFootballResults, type FootballFixture } from './football.ts'
+import { dailySchedule, scheduleLookup, scheduledMarket, verifiedScheduledMatch, type Schedule, type ScheduleResults } from './schedule.ts'
 import type { Command } from './game.ts'
 
 const fixtures = [
@@ -69,7 +70,7 @@ function simulate(fixture: Fixture) {
   return { winner, score: tied ? low + '–' + low : homeWon ? high + '–' + low : low + '–' + high }
 }
 
-function settle(id: string, now: number, football: FootballFixture[] = []) {
+function settle(id: string, now: number, football: FootballFixture[] = [], scheduleResults: ScheduleResults = new Map()) {
   const due = db()
     .prepare(
       `SELECT id, event, selection, price, CAST(stake AS TEXT) AS stake FROM sports_ticket
@@ -93,6 +94,18 @@ function settle(id: string, now: number, football: FootballFixture[] = []) {
         }
         if (!actual.result) continue
         result = actual.result
+      } else if (ticket.event.startsWith('sportsdb:')) {
+        const actual = scheduleResults.get(ticket.event)
+        if (!actual) continue
+        if ('void' in actual) {
+          const stake = BigInt(ticket.stake)
+          db().prepare("UPDATE sports_ticket SET state = 'Void', payout = ?, score = ? WHERE id = ?")
+            .run(stake, actual.score, ticket.id)
+          db().prepare('UPDATE player SET demo = demo + ? WHERE id = ?').run(stake, id)
+          record(id, 'Sports refund', stake, actual.score + ' · Ticket ' + ticket.id.slice(0, 8), 'Sportsbook')
+          continue
+        }
+        result = actual
       } else {
         result = simulate(fixtures[Number(ticket.event.split('-')[1])])
       }
@@ -147,9 +160,31 @@ function recordFootballRevisions(football: FootballFixture[], now: number) {
   }
 }
 
-export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null) {
+export async function liveSportsbook(id: string, input: Command) {
+  const now = Date.now()
+  const due = db().prepare(
+    "SELECT event FROM sports_ticket WHERE player = ? AND state = 'Open' AND settles <= ? AND event LIKE 'sportsdb:%'",
+  ).all(id, now).flatMap(({ event }) => typeof event === 'string' ? [event] : [])
+  const [football, schedule, results] = await Promise.all([
+    sportsbookFootball(id),
+    dailySchedule(now),
+    Promise.all(due.map(async event => [event, (await scheduleLookup(event, now))?.result] as const)),
+  ])
+  if (input.action === 'sports-place' && typeof input.event === 'string' && input.event.startsWith('sportsdb:')) {
+    const expected = schedule.fixtures.find(match => match.id === input.event)
+    const answer = expected && await scheduleLookup(expected.id)
+    if (!expected || !answer || !verifiedScheduledMatch(expected, answer.match)) {
+      throw new Error('This fixture could not be verified. Refresh the markets.')
+    }
+  }
+  const completed: ScheduleResults = new Map()
+  for (const [event, result] of results) if (result) completed.set(event, result)
+  return sportsbook(id, input, Date.now(), football, schedule, completed)
+}
+
+export function sportsbook(id: string, input: Command, now = Date.now(), football: FootballFixture[] | null = null, schedule?: Schedule, scheduleResults?: ScheduleResults) {
   return atomic(() => {
-    settle(id, now, football ?? [])
+    settle(id, now, football ?? [], scheduleResults)
     if (football?.length) recordFootballRevisions(football, now)
     const window = Math.floor(now / interval)
     const simulated = fixtures.map((_, index) => {
@@ -164,7 +199,10 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
     const footballStatus = !process.env.CASINO_FOOTBALL_DATA_TOKEN && football === null
       ? 'simulated'
       : football === null ? 'unavailable' : 'current'
-    const events = [...real, ...simulated.filter(event => footballStatus === 'simulated' || event.sport !== 'Football')]
+    const useSchedule = schedule && schedule.status !== 'disabled'
+    const events = useSchedule
+      ? schedule.fixtures.filter(match => match.starts > now).flatMap(scheduledMarket)
+      : [...real, ...simulated.filter(event => footballStatus === 'simulated' || event.sport !== 'Football')]
     let message: string | undefined
     if (input.action === 'sports-place') {
       const state = player(id)!
@@ -172,7 +210,7 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
       const event = events.find(item => item.id === input.event)
       const option = event?.options.find(item => item.selection === input.selection)
       if (!event || !option || now >= event.starts || option.price !== input.price ||
-          (event.id.startsWith('football-data:') && event.starts !== input.starts)) {
+          ((event.id.startsWith('football-data:') || event.id.startsWith('sportsdb:')) && event.starts !== input.starts)) {
         throw new Error('This market or price has expired. Refresh the fixtures.')
       }
       if (db().prepare('SELECT id FROM sports_ticket WHERE player = ? AND event = ?').get(id, event.id)) {
@@ -202,6 +240,6 @@ export function sportsbook(id: string, input: Command, now = Date.now(), footbal
       record(id, 'Sports wager', -stake, event.home + ' vs ' + event.away + ' · ' + option.label, 'Sportsbook')
       message = 'Demo ticket accepted.'
     }
-    return { sports: { events, tickets: tickets(id), time: now, footballStatus }, message }
+    return { sports: { events, tickets: tickets(id), time: now, footballStatus: useSchedule ? undefined : footballStatus, scheduleStatus: schedule?.status }, message }
   })
 }
